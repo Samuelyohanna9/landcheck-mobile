@@ -1,20 +1,24 @@
-import { StatusBar } from 'expo-status-bar';
-import { StyleSheet, Text, View } from 'react-native';
+import { useEffect } from "react";
+import { StatusBar } from "expo-status-bar";
+import { SafeAreaProvider } from "react-native-safe-area-context";
+import { AuthProvider } from "./src/context/AuthContext";
+import { GreenSyncProvider } from "./src/context/GreenSyncContext";
+import { AppNavigator } from "./src/navigation/AppNavigator";
+import { setupGreenNotifications } from "./src/notifications/greenNotifications";
 
 export default function App() {
+  useEffect(() => {
+    void setupGreenNotifications();
+  }, []);
+
   return (
-    <View style={styles.container}>
-      <Text>Open up App.tsx to start working on your app!</Text>
-      <StatusBar style="auto" />
-    </View>
+    <SafeAreaProvider>
+      <AuthProvider>
+        <GreenSyncProvider>
+          <StatusBar style="dark" />
+          <AppNavigator />
+        </GreenSyncProvider>
+      </AuthProvider>
+    </SafeAreaProvider>
   );
 }
-
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#fff',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-});
