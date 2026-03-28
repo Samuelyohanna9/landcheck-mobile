@@ -30,6 +30,20 @@ export const fetchProjects = async (organizationId?: number | null, assigneeName
   return Array.isArray(response.data) ? response.data : [];
 };
 
+export const fetchOrganizationBranding = async (organizationId: number) => {
+  const response = await api.get<{
+    id: number;
+    name?: string | null;
+    slug?: string | null;
+    status?: string | null;
+    is_active?: boolean;
+    logo_url?: string | null;
+  }>(`/green/organizations/${organizationId}/branding`, {
+    params: { _ts: Date.now() },
+  });
+  return response.data;
+};
+
 export const fetchProjectCarbonSummary = async (projectId: number, assigneeName?: string | null) => {
   const response = await api.get<CarbonSummary>(`/green/projects/${projectId}/carbon-summary`, {
     params: {

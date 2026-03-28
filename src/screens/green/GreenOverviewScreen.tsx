@@ -11,7 +11,7 @@ import { ScreenSurface } from "../../components/ScreenSurface";
 import { SectionCard } from "../../components/SectionCard";
 import { SelectSheet } from "../../components/SelectSheet";
 import { StatusChip } from "../../components/StatusChip";
-import { fetchProjectCarbonSummary } from "../../api/green";
+import { fetchOrganizationBranding, fetchProjectCarbonSummary, fetchProjectDetail } from "../../api/green";
 import { useAuth } from "../../context/AuthContext";
 import { useGreenSync } from "../../context/GreenSyncContext";
 import {
@@ -56,7 +56,26 @@ export const GreenOverviewScreen = () => {
   const [projectPickerOpen, setProjectPickerOpen] = useState(false);
   const [carbonSummary, setCarbonSummary] = useState<CarbonSummary | null>(null);
   const [carbonError, setCarbonError] = useState("");
-  const organizationLogoUrl = selectedProject?.organization_logo_url || session?.user.organization_logo_url || null;
+  const [liveProjectBranding, setLiveProjectBranding] = useState<{
+    organization_id?: number | null;
+    organization_name?: string | null;
+    organization_logo_url?: string | null;
+  } | null>(null);
+  const [organizationBranding, setOrganizationBranding] = useState<{ name?: string | null; logo_url?: string | null } | null>(null);
+  const organizationId =
+    Number(liveProjectBranding?.organization_id || selectedProject?.organization_id || session?.user.organization_id || 0) || null;
+  const organizationName =
+    liveProjectBranding?.organization_name ||
+    organizationBranding?.name ||
+    selectedProject?.organization_name ||
+    session?.user.organization_name ||
+    "";
+  const organizationLogoUrl =
+    liveProjectBranding?.organization_logo_url ||
+    organizationBranding?.logo_url ||
+    selectedProject?.organization_logo_url ||
+    session?.user.organization_logo_url ||
+    null;
 
   const currentUserName = normalizeName(session?.user.full_name);
   const scopedTrees = useMemo(() => {
@@ -147,6 +166,102 @@ export const GreenOverviewScreen = () => {
     };
   }, [isOnline, selectedProjectId, session?.user.full_name]);
 
+  useEffect(() => {
+    let active = true;
+    const actorName = String(session?.user.full_name || "").trim();
+    const loadProjectBranding = async () => {
+      if (!selectedProjectId) {
+        if (active) setLiveProjectBranding(null);
+        return;
+      }
+      if (!isOnline) {
+        if (active) {
+          setLiveProjectBranding({
+            organization_id: selectedProject?.organization_id || null,
+            organization_name: selectedProject?.organization_name || null,
+            organization_logo_url: selectedProject?.organization_logo_url || null,
+          });
+        }
+        return;
+      }
+      try {
+        const detail = await fetchProjectDetail(selectedProjectId, actorName || undefined);
+        if (!active) return;
+        setLiveProjectBranding({
+          organization_id: detail.organization_id || null,
+          organization_name: detail.organization_name || null,
+          organization_logo_url: detail.organization_logo_url || null,
+        });
+      } catch {
+        if (!active) return;
+        setLiveProjectBranding({
+          organization_id: selectedProject?.organization_id || null,
+          organization_name: selectedProject?.organization_name || null,
+          organization_logo_url: selectedProject?.organization_logo_url || null,
+        });
+      }
+    };
+    void loadProjectBranding();
+    return () => {
+      active = false;
+    };
+  }, [
+    isOnline,
+    selectedProject?.organization_id,
+    selectedProject?.organization_logo_url,
+    selectedProject?.organization_name,
+    selectedProjectId,
+    session?.user.full_name,
+  ]);
+
+  useEffect(() => {
+    let active = true;
+    const loadBranding = async () => {
+      if (!organizationId) {
+        if (active) setOrganizationBranding(null);
+        return;
+      }
+
+      if (!isOnline) {
+        if (active) {
+          setOrganizationBranding({
+            name: selectedProject?.organization_name || session?.user.organization_name || null,
+            logo_url: selectedProject?.organization_logo_url || session?.user.organization_logo_url || null,
+          });
+        }
+        return;
+      }
+
+      try {
+        const branding = await fetchOrganizationBranding(organizationId);
+        if (!active) return;
+        setOrganizationBranding({
+          name: branding.name || null,
+          logo_url: branding.logo_url || null,
+        });
+      } catch {
+        if (!active) return;
+        setOrganizationBranding({
+          name: selectedProject?.organization_name || session?.user.organization_name || null,
+          logo_url: selectedProject?.organization_logo_url || session?.user.organization_logo_url || null,
+        });
+      }
+    };
+    void loadBranding();
+    return () => {
+      active = false;
+    };
+  }, [
+    isOnline,
+    organizationId,
+    liveProjectBranding?.organization_logo_url,
+    liveProjectBranding?.organization_name,
+    selectedProject?.organization_logo_url,
+    selectedProject?.organization_name,
+    session?.user.organization_logo_url,
+    session?.user.organization_name,
+  ]);
+
   const annualPerTreeKg = useMemo(() => {
     if (!carbonSummary || healthyTrees <= 0) return 0;
     return carbonSummary.annual_co2_kg / healthyTrees;
@@ -158,7 +273,14 @@ export const GreenOverviewScreen = () => {
         <View style={styles.heroBrandRow}>
           <View style={styles.heroBrandLogos}>
             <BrandMark size={44} />
-            {organizationLogoUrl ? <BrandMark size={44} logoUrl={organizationLogoUrl} fallbackToDefault={false} variant="partner" /> : null}
+            {(organizationLogoUrl || organizationName) ? (
+              <BrandMark
+                size={44}
+                logoUrl={organizationLogoUrl}
+                fallbackToDefault={false}
+                variant="partner"
+              />
+            ) : null}
           </View>
           <View style={styles.heroBrandText}>
             <Text style={styles.heroTitle}>
