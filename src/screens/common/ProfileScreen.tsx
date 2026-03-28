@@ -7,6 +7,7 @@ import { ScreenHero } from "../../components/ScreenHero";
 import { ScreenSurface } from "../../components/ScreenSurface";
 import { SectionCard } from "../../components/SectionCard";
 import { StatusChip } from "../../components/StatusChip";
+import { SyncProgressPanel } from "../../components/SyncProgressPanel";
 import { useAuth } from "../../context/AuthContext";
 import { useGreenSync } from "../../context/GreenSyncContext";
 import { normalizeName } from "../../green/workflow";
@@ -15,7 +16,7 @@ import type { GreenAppStackParamList } from "../../types/navigation";
 
 export const ProfileScreen = () => {
   const { session, signOut } = useAuth();
-  const { isOnline, offlineStats, tasks, trees, refreshing, refreshAll, syncNow, syncing } = useGreenSync();
+  const { isOnline, offlineStats, tasks, trees, refreshing, refreshAll, syncProgress } = useGreenSync();
   const navigation = useNavigation<NativeStackNavigationProp<GreenAppStackParamList>>();
 
   if (!session) return null;
@@ -30,7 +31,6 @@ export const ProfileScreen = () => {
         subtitle={`${session.user.role_name || session.user.role || "Field user"} | ${session.user.organization_name || "System scope"}`}
         logoUrl={session.user.organization_logo_url || undefined}
         badge={<StatusChip label={isOnline ? "Online" : "Offline"} tone={isOnline ? "online" : "offline"} />}
-        rightSlot={<PrimaryButton label={syncing ? "Syncing..." : "Sync"} onPress={() => void syncNow()} variant="ghost" disabled={!isOnline || syncing} />}
       />
 
       <SectionCard title="My field summary" subtitle={undefined}>
@@ -42,7 +42,10 @@ export const ProfileScreen = () => {
           <MetricTile label="Waiting to send" value={offlineStats.queued} tone="warning" helper="Will send automatically" />
           <MetricTile label="Status" value={isOnline ? "Online" : "Offline"} tone={isOnline ? "success" : "warning"} helper={isOnline ? "Connected now" : "Saved on phone"} />
         </View>
-        {offlineStats.queued > 0 ? (
+        <SyncProgressPanel progress={syncProgress} />
+        {syncProgress.active ? (
+          <Text style={styles.infoLine}>Saved work is being sent now. Keep the app open until it finishes.</Text>
+        ) : offlineStats.queued > 0 ? (
           <Text style={styles.infoLine}>
             {offlineStats.queued} item{offlineStats.queued === 1 ? "" : "s"} saved on this phone. They will send automatically when you have network.
           </Text>

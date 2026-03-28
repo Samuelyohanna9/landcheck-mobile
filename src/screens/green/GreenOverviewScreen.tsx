@@ -46,6 +46,7 @@ export const GreenOverviewScreen = () => {
     isCustodianUser,
     isOnline,
     offlineStats,
+    syncProgress,
     refreshAll,
     selectProject,
     distributionAllocations,
@@ -170,8 +171,13 @@ export const GreenOverviewScreen = () => {
           <View style={styles.heroStatusCard}>
             <Text style={styles.heroStatusLabel}>{isOnline ? "ONLINE" : "OFFLINE"}</Text>
             <Text style={styles.heroStatusValue}>
-              {offlineStats.queued > 0 ? `${offlineStats.queued} queued` : "All synced"}
+              {syncProgress.active
+                ? `Sending ${Math.min(syncProgress.completed, syncProgress.total)} of ${syncProgress.total}`
+                : offlineStats.queued > 0
+                  ? `${offlineStats.queued} waiting`
+                  : "All synced"}
             </Text>
+            {syncProgress.active ? <View style={styles.heroStatusBar}><View style={[styles.heroStatusBarFill, { width: `${Math.max(syncProgress.percent, 8)}%` }]} /></View> : null}
           </View>
           <View style={styles.heroUserPill}>
             <Text style={styles.heroUserText}>{session?.user.full_name || "Current user"}</Text>
@@ -412,8 +418,21 @@ const styles = StyleSheet.create({
   },
   heroStatusValue: {
     color: "rgba(255,255,255,0.88)",
-    fontSize: 16,
+    fontSize: 14,
     fontWeight: "800",
+  },
+  heroStatusBar: {
+    width: "100%",
+    height: 6,
+    borderRadius: radii.pill,
+    backgroundColor: "rgba(255,255,255,0.16)",
+    overflow: "hidden",
+    marginTop: 6,
+  },
+  heroStatusBarFill: {
+    height: "100%",
+    borderRadius: radii.pill,
+    backgroundColor: colors.inverseText,
   },
   heroUserPill: {
     flex: 1.22,

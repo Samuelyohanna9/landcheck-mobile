@@ -24,6 +24,7 @@ import { ScreenSurface } from "../../components/ScreenSurface";
 import { SectionCard } from "../../components/SectionCard";
 import { SelectSheet } from "../../components/SelectSheet";
 import { StatusChip } from "../../components/StatusChip";
+import { SyncProgressPanel } from "../../components/SyncProgressPanel";
 import { useGreenSync } from "../../context/GreenSyncContext";
 import {
   INSPECTION_STATUS_OPTIONS,
@@ -78,6 +79,7 @@ export const GreenTasksScreen = () => {
     isCustodianUser,
     error,
     syncNotice,
+    syncProgress,
     selectProject,
     refreshAll,
     updateTree,
@@ -412,6 +414,7 @@ export const GreenTasksScreen = () => {
           ))}
         </View>
         {selectedProject ? <Text style={styles.scopeText}>{selectedProject.name} | {selectedProject.location_text || "Project selected"}</Text> : null}
+        <SyncProgressPanel progress={syncProgress} />
         {syncNotice ? <Text style={styles.scopeNote}>{syncNotice}</Text> : null}
         {error ? <Text style={styles.error}>{error}</Text> : null}
         <View style={styles.metricRow}>

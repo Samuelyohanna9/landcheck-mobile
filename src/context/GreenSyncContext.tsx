@@ -33,6 +33,7 @@ import {
 import type {
   CustodianSummary,
   DistributionAllocationSummary,
+  GreenSyncProgress,
   GreenTaskMutationInput,
   GreenTreeCreateInput,
   GreenTreeUpdateInput,
@@ -83,6 +84,7 @@ type GreenSyncContextValue = {
   offlineStats: OfflineStats;
   error: string;
   syncNotice: string;
+  syncProgress: GreenSyncProgress;
   selectProject: (projectId: number) => Promise<void>;
   refreshAll: () => Promise<void>;
   syncNow: () => Promise<void>;
@@ -100,6 +102,17 @@ const emptyStats: OfflineStats = {
   cachedTasks: 0,
   cachedTrees: 0,
   lastSyncedAt: null,
+};
+
+const emptySyncProgress: GreenSyncProgress = {
+  active: false,
+  total: 0,
+  completed: 0,
+  synced: 0,
+  failed: 0,
+  conflicts: 0,
+  percent: 0,
+  currentLabel: null,
 };
 
 const GreenSyncContext = createContext<GreenSyncContextValue | null>(null);
@@ -123,10 +136,12 @@ export const GreenSyncProvider = ({ children }: { children: ReactNode }) => {
   const [offlineStats, setOfflineStats] = useState<OfflineStats>(emptyStats);
   const [error, setError] = useState("");
   const [syncNotice, setSyncNotice] = useState("");
+  const [syncProgress, setSyncProgress] = useState<GreenSyncProgress>(emptySyncProgress);
   const seenTaskIdsRef = useRef<Set<number>>(new Set());
   const seenOrderIdsRef = useRef<Set<number>>(new Set());
   const taskNotifyPrimedRef = useRef(false);
   const orderNotifyPrimedRef = useRef(false);
+  const initialAutoSyncRef = useRef(false);
 
   const refreshStats = useCallback(async () => {
     const stats = await getOfflineStats("green");
@@ -334,8 +349,14 @@ export const GreenSyncProvider = ({ children }: { children: ReactNode }) => {
     if (!session || !isOnline || syncing) return;
     setSyncing(true);
     setError("");
+    setSyncProgress(emptySyncProgress);
     try {
-      const result = await syncPendingGreenActions(session);
+      const result = await syncPendingGreenActions(session, (progress) => {
+        setSyncProgress(progress);
+        if (progress.total > 0) {
+          setSyncNotice(`Sending saved work: ${Math.min(progress.completed, progress.total)} of ${progress.total}.`);
+        }
+      });
       await refreshGreenCaches(session, selectedProjectId);
       const refreshedProjects = await loadCachedProjectLists();
       if (selectedProjectId) {
@@ -365,18 +386,19 @@ export const GreenSyncProvider = ({ children }: { children: ReactNode }) => {
       }
       await refreshStats();
       const parts: string[] = [];
-      if (result.synced > 0) parts.push(`Synced ${result.synced} action${result.synced === 1 ? "" : "s"}`);
-      if (result.conflicts > 0) parts.push(`${result.conflicts} conflict${result.conflicts === 1 ? "" : "s"} resolved`);
-      if (result.pending > 0) parts.push(`${result.pending} still queued`);
+      if (result.synced > 0) parts.push(`Sent ${result.synced} item${result.synced === 1 ? "" : "s"}`);
+      if (result.conflicts > 0) parts.push(`${result.conflicts} older item${result.conflicts === 1 ? "" : "s"} skipped`);
+      if (result.pending > 0) parts.push(`${result.pending} still waiting to send`);
       setSyncNotice(
         parts.length > 0
           ? parts.join(". ") + "."
-          : "Offline queue is clear.",
+          : "Everything you recorded has been sent.",
       );
     } catch (err) {
       setError(getErrorMessage(err, "Failed to sync offline queue."));
     } finally {
       setSyncing(false);
+      setSyncProgress(emptySyncProgress);
     }
   }, [
     isOnline,
@@ -605,6 +627,7 @@ export const GreenSyncProvider = ({ children }: { children: ReactNode }) => {
     seenOrderIdsRef.current = new Set();
     taskNotifyPrimedRef.current = false;
     orderNotifyPrimedRef.current = false;
+    initialAutoSyncRef.current = false;
   }, [selectedProjectId, session?.user.full_name]);
 
   useEffect(() => {
@@ -647,6 +670,13 @@ export const GreenSyncProvider = ({ children }: { children: ReactNode }) => {
     return () => clearInterval(timer);
   }, [isOnline, refreshSelectedProjectLive, selectedProjectId, session]);
 
+  useEffect(() => {
+    if (!session || !isOnline || syncing || initialAutoSyncRef.current) return;
+    if (offlineStats.queued <= 0) return;
+    initialAutoSyncRef.current = true;
+    void syncNow();
+  }, [isOnline, offlineStats.queued, session, syncNow, syncing]);
+
   const selectedProject = useMemo(
     () => projects.find((project) => project.id === selectedProjectId) || projects[0] || null,
     [projects, selectedProjectId],
@@ -685,6 +715,7 @@ export const GreenSyncProvider = ({ children }: { children: ReactNode }) => {
       offlineStats,
       error,
       syncNotice,
+      syncProgress,
       selectProject,
       refreshAll,
       syncNow,
@@ -714,6 +745,7 @@ export const GreenSyncProvider = ({ children }: { children: ReactNode }) => {
       selectedProjectId,
       submitTask,
       syncNotice,
+      syncProgress,
       syncNow,
       syncing,
       tasks,

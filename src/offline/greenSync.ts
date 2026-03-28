@@ -1,5 +1,6 @@
 import axios from "axios";
 import type {
+  GreenSyncProgress,
   GreenTaskMutationInput,
   GreenTreeCreateInput,
   GreenTreeUpdateInput,
@@ -44,6 +45,50 @@ import { normalizePhotoList, normalizeTaskSummary, normalizeTreeSummary } from "
 const APP_MODE = "green";
 const MAX_QUEUE_RETRIES = 5;
 let syncPromise: Promise<{ synced: number; failed: number; conflicts: number; pending: number }> | null = null;
+
+const describeQueueAction = (item: SyncQueueRow) => {
+  switch (item.action_type) {
+    case "create_tree":
+      return "Sending saved tree";
+    case "update_tree":
+      return "Sending tree update";
+    case "update_task":
+      return "Sending task update";
+    case "submit_task":
+      return "Sending task submission";
+    case "upload_tree_photos":
+      return "Sending tree photo";
+    case "upload_task_photos":
+      return "Sending task photo";
+    default:
+      return "Sending saved work";
+  }
+};
+
+const buildSyncProgress = ({
+  total,
+  completed,
+  synced,
+  failed,
+  conflicts,
+  currentLabel,
+}: {
+  total: number;
+  completed: number;
+  synced: number;
+  failed: number;
+  conflicts: number;
+  currentLabel?: string | null;
+}): GreenSyncProgress => ({
+  active: total > 0,
+  total,
+  completed,
+  synced,
+  failed,
+  conflicts,
+  percent: total > 0 ? Math.max(0, Math.min(100, Math.round((completed / total) * 100))) : 0,
+  currentLabel: currentLabel || null,
+});
 
 const nowIso = () => new Date().toISOString();
 
@@ -429,26 +474,74 @@ const processQueueRow = async (session: MobileSession, item: SyncQueueRow) => {
   }
 };
 
-export const syncPendingGreenActions = async (session: MobileSession) => {
+export const syncPendingGreenActions = async (
+  session: MobileSession,
+  onProgress?: (progress: GreenSyncProgress) => void,
+) => {
   if (syncPromise) return syncPromise;
   syncPromise = (async () => {
     const queue = await readSyncQueue(["pending", "failed"]);
     let synced = 0;
     let failed = 0;
     let conflicts = 0;
+    let completed = 0;
+
+    if (queue.length > 0) {
+      onProgress?.(
+        buildSyncProgress({
+          total: queue.length,
+          completed: 0,
+          synced: 0,
+          failed: 0,
+          conflicts: 0,
+          currentLabel: describeQueueAction(queue[0]),
+        }),
+      );
+    }
 
     for (const item of queue) {
+      onProgress?.(
+        buildSyncProgress({
+          total: queue.length,
+          completed,
+          synced,
+          failed,
+          conflicts,
+          currentLabel: describeQueueAction(item),
+        }),
+      );
       try {
         await setQueueItemStatus(item.id, "syncing");
         await processQueueRow(session, item);
         await deleteQueueItem(item.id);
         synced += 1;
+        completed += 1;
+        onProgress?.(
+          buildSyncProgress({
+            total: queue.length,
+            completed,
+            synced,
+            failed,
+            conflicts,
+            currentLabel: describeQueueAction(item),
+          }),
+        );
       } catch (error) {
         if (isLikelyOfflineError(error)) {
           await setQueueItemStatus(item.id, item.status === "failed" ? "failed" : "pending", {
             lastError: axios.isAxiosError(error) ? error.message : "Offline",
             retryCount: Number(item.retry_count || 0),
           });
+          onProgress?.(
+            buildSyncProgress({
+              total: queue.length,
+              completed,
+              synced,
+              failed,
+              conflicts,
+              currentLabel: "Waiting for network",
+            }),
+          );
           break;
         }
 
@@ -463,6 +556,17 @@ export const syncPendingGreenActions = async (session: MobileSession) => {
         if (isConflict) {
           await deleteQueueItem(item.id);
           conflicts += 1;
+          completed += 1;
+          onProgress?.(
+            buildSyncProgress({
+              total: queue.length,
+              completed,
+              synced,
+              failed,
+              conflicts,
+              currentLabel: "Skipped an outdated item",
+            }),
+          );
           continue;
         }
 
@@ -470,13 +574,25 @@ export const syncPendingGreenActions = async (session: MobileSession) => {
         if (nextRetries >= MAX_QUEUE_RETRIES) {
           await deleteQueueItem(item.id);
           conflicts += 1;
+          completed += 1;
         } else {
           failed += 1;
           await setQueueItemStatus(item.id, "failed", {
             lastError: detailText.slice(0, 500),
             retryCount: nextRetries,
           });
+          completed += 1;
         }
+        onProgress?.(
+          buildSyncProgress({
+            total: queue.length,
+            completed,
+            synced,
+            failed,
+            conflicts,
+            currentLabel: "A saved item needs another try",
+          }),
+        );
       }
     }
 

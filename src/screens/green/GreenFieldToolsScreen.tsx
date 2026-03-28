@@ -16,6 +16,7 @@ import { ScreenSurface } from "../../components/ScreenSurface";
 import { SectionCard } from "../../components/SectionCard";
 import { SelectSheet } from "../../components/SelectSheet";
 import { StatusChip } from "../../components/StatusChip";
+import { SyncProgressPanel } from "../../components/SyncProgressPanel";
 import { useAuth } from "../../context/AuthContext";
 import { useGreenSync } from "../../context/GreenSyncContext";
 import {
@@ -61,6 +62,7 @@ export const GreenFieldToolsScreen = () => {
     isOnline,
     isCustodianUser,
     offlineStats,
+    syncProgress,
     selectProject,
     refreshAll,
     createTree,
@@ -107,7 +109,9 @@ export const GreenFieldToolsScreen = () => {
 
   const workWaitingToSend = offlineStats.queued;
   const workStatusMessage =
-    workWaitingToSend > 0
+    syncProgress.active
+      ? "Saved work is being sent now. Keep the app open until it finishes."
+      : workWaitingToSend > 0
       ? `${workWaitingToSend} item${workWaitingToSend === 1 ? "" : "s"} saved on this phone. They will send automatically when you have network.`
       : "Everything you recorded has been sent.";
 
@@ -705,6 +709,7 @@ export const GreenFieldToolsScreen = () => {
               <MetricTile label="My trees" value={myTrees.length} tone="success" helper="Trees you recorded" />
               <MetricTile label="Waiting to send" value={workWaitingToSend} tone="warning" helper="Will send automatically" />
             </View>
+            <SyncProgressPanel progress={syncProgress} />
             <Text style={styles.note}>{workStatusMessage}</Text>
             {isCustodianUser && matchedCustodian ? <Text style={styles.note}>Custodian mode active for {matchedCustodian.name}. Maintenance stays disabled; use this map to record planting and existing trees.</Text> : null}
           </View>

@@ -236,6 +236,17 @@ export type OfflineStats = {
   lastSyncedAt?: string | null;
 };
 
+export type GreenSyncProgress = {
+  active: boolean;
+  total: number;
+  completed: number;
+  synced: number;
+  failed: number;
+  conflicts: number;
+  percent: number;
+  currentLabel?: string | null;
+};
+
 export type DraftPhoto = {
   uri: string;
   fileName?: string | null;
