@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Image, StyleSheet, View } from "react-native";
 import { colors } from "../theme/tokens";
-import { resolveGreenAssetUrl } from "../utils/assets";
+import { resolveGreenAssetCandidates } from "../utils/assets";
 
 type BrandMarkProps = {
   size?: number;
@@ -11,16 +11,14 @@ type BrandMarkProps = {
 };
 
 export const BrandMark = ({ size = 58, logoUrl, fallbackToDefault = true, variant = "default" }: BrandMarkProps) => {
-  const [loadFailed, setLoadFailed] = useState(false);
+  const [candidateIndex, setCandidateIndex] = useState(0);
 
   useEffect(() => {
-    setLoadFailed(false);
+    setCandidateIndex(0);
   }, [logoUrl]);
 
-  const resolvedLogoUrl = useMemo(() => {
-    if (loadFailed) return "";
-    return resolveGreenAssetUrl(logoUrl);
-  }, [loadFailed, logoUrl]);
+  const resolvedCandidates = useMemo(() => resolveGreenAssetCandidates(logoUrl), [logoUrl]);
+  const resolvedLogoUrl = resolvedCandidates[candidateIndex] || "";
 
   if (!resolvedLogoUrl && !fallbackToDefault) return null;
 
@@ -45,7 +43,15 @@ export const BrandMark = ({ size = 58, logoUrl, fallbackToDefault = true, varian
           variant === "partner" ? { borderRadius: Math.max(8, size * 0.18) } : null,
         ]}
         resizeMode="contain"
-        onError={() => setLoadFailed(true)}
+        onError={() => {
+          if (candidateIndex + 1 < resolvedCandidates.length) {
+            setCandidateIndex((current) => current + 1);
+            return;
+          }
+          if (!fallbackToDefault) {
+            setCandidateIndex(resolvedCandidates.length);
+          }
+        }}
       />
     </View>
   );
