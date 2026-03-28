@@ -7,9 +7,10 @@ type BrandMarkProps = {
   size?: number;
   logoUrl?: string | null;
   fallbackToDefault?: boolean;
+  variant?: "default" | "partner";
 };
 
-export const BrandMark = ({ size = 58, logoUrl, fallbackToDefault = true }: BrandMarkProps) => {
+export const BrandMark = ({ size = 58, logoUrl, fallbackToDefault = true, variant = "default" }: BrandMarkProps) => {
   const [loadFailed, setLoadFailed] = useState(false);
 
   useEffect(() => {
@@ -24,12 +25,25 @@ export const BrandMark = ({ size = 58, logoUrl, fallbackToDefault = true }: Bran
   if (!resolvedLogoUrl && !fallbackToDefault) return null;
 
   const source = resolvedLogoUrl ? { uri: resolvedLogoUrl } : require("../../assets/green-logo-cropped-760.png");
+  const imageScale = variant === "partner" ? 0.9 : 0.76;
 
   return (
-    <View style={[styles.wrap, { width: size, height: size, borderRadius: size / 3 }]}>
+    <View
+      style={[
+        styles.wrap,
+        variant === "partner" ? styles.wrapPartner : styles.wrapDefault,
+        { width: size, height: size, borderRadius: size / 3 },
+      ]}
+    >
       <Image
         source={source}
-        style={{ width: size * 0.76, height: size * 0.76 }}
+        style={[
+          {
+            width: size * imageScale,
+            height: size * imageScale,
+          },
+          variant === "partner" ? { borderRadius: Math.max(8, size * 0.18) } : null,
+        ]}
         resizeMode="contain"
         onError={() => setLoadFailed(true)}
       />
@@ -41,7 +55,6 @@ const styles = StyleSheet.create({
   wrap: {
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "#ffffff",
     borderWidth: 1,
     borderColor: colors.borderStrong,
     overflow: "hidden",
@@ -50,5 +63,11 @@ const styles = StyleSheet.create({
     shadowRadius: 16,
     shadowOffset: { width: 0, height: 8 },
     elevation: 4,
+  },
+  wrapDefault: {
+    backgroundColor: "#ffffff",
+  },
+  wrapPartner: {
+    backgroundColor: "#050505",
   },
 });

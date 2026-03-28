@@ -159,7 +159,7 @@ export const GreenOverviewScreen = () => {
         <View style={styles.heroBrandRow}>
           <View style={styles.heroBrandLogos}>
             <BrandMark size={44} />
-            {organizationLogoUrl ? <BrandMark size={44} logoUrl={organizationLogoUrl} fallbackToDefault={false} /> : null}
+            {organizationLogoUrl ? <BrandMark size={44} logoUrl={organizationLogoUrl} fallbackToDefault={false} variant="partner" /> : null}
           </View>
           <View style={styles.heroBrandText}>
             <Text style={styles.heroTitle}>
