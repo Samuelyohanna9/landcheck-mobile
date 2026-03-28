@@ -27,6 +27,7 @@ import {
 } from "../../green/workflow";
 import type { CarbonSummary } from "../../types/domain";
 import { colors, radii, spacing } from "../../theme/tokens";
+import { resolveGreenAssetUrl } from "../../utils/assets";
 
 const SURVIVAL_GAUGE_SIZE = 68;
 const SURVIVAL_GAUGE_STROKE = 7;
@@ -56,6 +57,7 @@ export const GreenOverviewScreen = () => {
   const [projectPickerOpen, setProjectPickerOpen] = useState(false);
   const [carbonSummary, setCarbonSummary] = useState<CarbonSummary | null>(null);
   const [carbonError, setCarbonError] = useState("");
+  const organizationLogoUrl = resolveGreenAssetUrl(session?.user.organization_logo_url);
 
   const currentUserName = normalizeName(session?.user.full_name);
   const scopedTrees = useMemo(() => {
@@ -157,7 +159,7 @@ export const GreenOverviewScreen = () => {
         <View style={styles.heroBrandRow}>
           <View style={styles.heroBrandLogos}>
             <BrandMark size={44} />
-            <BrandMark size={44} logoUrl={session?.user.organization_logo_url || undefined} />
+            {organizationLogoUrl ? <BrandMark size={44} logoUrl={organizationLogoUrl} fallbackToDefault={false} /> : null}
           </View>
           <View style={styles.heroBrandText}>
             <Text style={styles.heroTitle}>

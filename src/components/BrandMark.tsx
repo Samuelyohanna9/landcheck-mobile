@@ -6,9 +6,10 @@ import { resolveGreenAssetUrl } from "../utils/assets";
 type BrandMarkProps = {
   size?: number;
   logoUrl?: string | null;
+  fallbackToDefault?: boolean;
 };
 
-export const BrandMark = ({ size = 58, logoUrl }: BrandMarkProps) => {
+export const BrandMark = ({ size = 58, logoUrl, fallbackToDefault = true }: BrandMarkProps) => {
   const [loadFailed, setLoadFailed] = useState(false);
 
   useEffect(() => {
@@ -19,6 +20,8 @@ export const BrandMark = ({ size = 58, logoUrl }: BrandMarkProps) => {
     if (loadFailed) return "";
     return resolveGreenAssetUrl(logoUrl);
   }, [loadFailed, logoUrl]);
+
+  if (!resolvedLogoUrl && !fallbackToDefault) return null;
 
   const source = resolvedLogoUrl ? { uri: resolvedLogoUrl } : require("../../assets/green-logo-cropped-760.png");
 
