@@ -57,7 +57,7 @@ export const GreenOverviewScreen = () => {
   const [projectPickerOpen, setProjectPickerOpen] = useState(false);
   const [carbonSummary, setCarbonSummary] = useState<CarbonSummary | null>(null);
   const [carbonError, setCarbonError] = useState("");
-  const organizationLogoUrl = resolveGreenAssetUrl(session?.user.organization_logo_url);
+  const organizationLogoUrl = resolveGreenAssetUrl(selectedProject?.organization_logo_url || session?.user.organization_logo_url);
 
   const currentUserName = normalizeName(session?.user.full_name);
   const scopedTrees = useMemo(() => {
