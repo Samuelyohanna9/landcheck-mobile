@@ -27,7 +27,6 @@ import {
 } from "../../green/workflow";
 import type { CarbonSummary } from "../../types/domain";
 import { colors, radii, spacing } from "../../theme/tokens";
-import { resolveGreenAssetUrl } from "../../utils/assets";
 
 const SURVIVAL_GAUGE_SIZE = 68;
 const SURVIVAL_GAUGE_STROKE = 7;
@@ -57,7 +56,7 @@ export const GreenOverviewScreen = () => {
   const [projectPickerOpen, setProjectPickerOpen] = useState(false);
   const [carbonSummary, setCarbonSummary] = useState<CarbonSummary | null>(null);
   const [carbonError, setCarbonError] = useState("");
-  const organizationLogoUrl = resolveGreenAssetUrl(selectedProject?.organization_logo_url || session?.user.organization_logo_url);
+  const organizationLogoUrl = selectedProject?.organization_logo_url || session?.user.organization_logo_url || null;
 
   const currentUserName = normalizeName(session?.user.full_name);
   const scopedTrees = useMemo(() => {
