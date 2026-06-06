@@ -11,6 +11,7 @@ Notifications.setNotificationHandler({
 });
 
 const GREEN_CHANNEL_ID = "green-alerts";
+const SPONSOR_CHANNEL_ID = "sponsor-alerts";
 
 export const setupGreenNotifications = async () => {
   if (Platform.OS === "android") {
@@ -19,6 +20,12 @@ export const setupGreenNotifications = async () => {
       importance: Notifications.AndroidImportance.HIGH,
       vibrationPattern: [0, 180, 120, 180],
       lightColor: "#2f8f4e",
+    });
+    await Notifications.setNotificationChannelAsync(SPONSOR_CHANNEL_ID, {
+      name: "LandCheck Sponsor Alerts",
+      importance: Notifications.AndroidImportance.HIGH,
+      vibrationPattern: [0, 180, 120, 180],
+      lightColor: "#c5a059",
     });
   }
 };

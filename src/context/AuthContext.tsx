@@ -1,9 +1,13 @@
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
+import { AppState, type AppStateStatus } from "react-native";
 import { bootstrapLocalDatabase } from "../storage/database";
 import { clearSession, loadSession, saveSession } from "../storage/session";
 import { hasStoredConsent, hasSeenIntro, markIntroSeen, saveStoredConsent } from "../storage/privacy";
-import { loginMobile } from "../api/auth";
+import { loginMobile, loginSponsorMobile, signUpSponsorMobile } from "../api/auth";
 import { fetchPrivacyPolicy, recordMobileConsent } from "../api/privacy";
+import { ensureGreenBackgroundTasksRegistered, unregisterGreenBackgroundTasks } from "../background/greenBackgroundTasks";
+import { clearGreenPushRegistration, syncGreenPushRegistration } from "../notifications/greenPushRegistration";
+import { clearSponsorPushRegistration, syncSponsorPushRegistration } from "../notifications/sponsorPushRegistration";
 import type { MobileSession, PrivacyPolicyMeta } from "../types/domain";
 
 type PendingConsent = {
@@ -17,6 +21,15 @@ type AuthContextValue = {
   pendingConsent: PendingConsent | null;
   needsIntro: boolean;
   signIn: (username: string, password: string) => Promise<void>;
+  signInSponsor: (email: string, password: string) => Promise<void>;
+  signUpSponsor: (input: {
+    full_name: string;
+    account_type: "individual" | "organization";
+    organization_name?: string | null;
+    email: string;
+    phone?: string | null;
+    password: string;
+  }) => Promise<void>;
   signOut: () => Promise<void>;
   acceptConsent: () => Promise<void>;
   declineConsent: () => Promise<void>;
@@ -27,6 +40,7 @@ const AuthContext = createContext<AuthContextValue | null>(null);
 
 const isOrgSuspended = (session: MobileSession | null): boolean => {
   if (!session) return false;
+  if (session.auth_mode === "sponsor_user") return false;
   if (session.auth_mode === "env_admin") return false;
   const user = session.user;
   if (user.organization_is_active === false) return true;
@@ -34,12 +48,14 @@ const isOrgSuspended = (session: MobileSession | null): boolean => {
   return status === "suspended" || status === "inactive";
 };
 
+const isSponsorSession = (session: MobileSession | null) => session?.auth_mode === "sponsor_user" || session?.appMode === "green_sponsor";
+
 const defaultPolicy = (): PrivacyPolicyMeta => ({
   consent_version: "mobile-local-fallback",
   scopes: {
     green_field_data_capture: {
       title: "Green field data capture",
-      summary: "Mobile capture includes GPS, tree photos, maintenance notes, and operational audit data.",
+      summary: "Mobile capture includes GPS, photos, field notes, and operational audit data.",
     },
   },
 });
@@ -65,6 +81,11 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         setSession(restored);
         const introSeen = await hasSeenIntro();
         if (!introSeen && active) setNeedsIntro(true);
+        if (isSponsorSession(restored)) {
+          if (active) setPendingConsent(null);
+          if (active) setBooting(false);
+          return;
+        }
         const consentExists = await hasStoredConsent("green", restored.user.id);
         if (!consentExists) {
           let policy = defaultPolicy();
@@ -83,6 +104,31 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       active = false;
     };
   }, []);
+
+  useEffect(() => {
+    if (!session) return;
+    if (isSponsorSession(session)) {
+      void syncSponsorPushRegistration(session).catch(() => {});
+      return;
+    }
+    void syncGreenPushRegistration(session).catch(() => {});
+    void ensureGreenBackgroundTasksRegistered(session).catch(() => {});
+  }, [session]);
+
+  useEffect(() => {
+    if (!session) return;
+    const subscription = AppState.addEventListener("change", (state: AppStateStatus) => {
+      if (state !== "active") return;
+      if (isSponsorSession(session)) {
+        void syncSponsorPushRegistration(session).catch(() => {});
+      } else {
+        void syncGreenPushRegistration(session).catch(() => {});
+      }
+    });
+    return () => {
+      subscription.remove();
+    };
+  }, [session]);
 
   const value = useMemo<AuthContextValue>(
     () => ({
@@ -112,7 +158,29 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         }
         setPendingConsent({ policy, session: signedIn });
       },
+      signInSponsor: async (email, password) => {
+        const signedIn = await loginSponsorMobile(email, password);
+        setSession(signedIn);
+        await saveSession(signedIn);
+        setPendingConsent(null);
+        const introSeen = await hasSeenIntro();
+        if (!introSeen) setNeedsIntro(true);
+      },
+      signUpSponsor: async (input) => {
+        const signedIn = await signUpSponsorMobile(input);
+        setSession(signedIn);
+        await saveSession(signedIn);
+        setPendingConsent(null);
+        const introSeen = await hasSeenIntro();
+        if (!introSeen) setNeedsIntro(true);
+      },
       signOut: async () => {
+        if (!isSponsorSession(session)) {
+          await clearGreenPushRegistration(session);
+          await unregisterGreenBackgroundTasks();
+        } else {
+          await clearSponsorPushRegistration(session);
+        }
         setPendingConsent(null);
         setSession(null);
         await clearSession();
@@ -124,6 +192,8 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         setPendingConsent(null);
       },
       declineConsent: async () => {
+        await clearGreenPushRegistration(session);
+        await unregisterGreenBackgroundTasks();
         setPendingConsent(null);
         setSession(null);
         await clearSession();
