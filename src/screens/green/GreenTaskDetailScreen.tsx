@@ -4,6 +4,7 @@ import * as Location from "expo-location";
 import { useFocusEffect, useNavigation, useRoute } from "@react-navigation/native";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ActivityIndicator, Alert, Image, Linking, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import { Image as ExpoImage } from "expo-image";
 import { DateField } from "../../components/DateField";
 import { EmptyState } from "../../components/EmptyState";
 import { GreenTreeCaptureMap } from "../../components/GreenTreeCaptureMap";
@@ -695,7 +696,7 @@ export const GreenTaskDetailScreen = () => {
             <Text style={styles.photoSectionLabel}>{metadataOnlyReview ? "Original evidence kept" : "Existing evidence"}</Text>
             <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.photoRow}>
               {existingEvidence.map((uri) => (
-                <Image key={uri} source={{ uri }} style={styles.photo} resizeMode="cover" />
+                <ExpoImage key={uri} source={{ uri }} style={styles.photo} contentFit="cover" />
               ))}
             </ScrollView>
           </View>
