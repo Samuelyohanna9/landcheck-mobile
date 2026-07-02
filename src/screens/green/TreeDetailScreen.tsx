@@ -1,11 +1,16 @@
 import { useCallback, useEffect, useState } from "react";
-import { StyleSheet, Text, View } from "react-native";
+import { Alert, Linking, StyleSheet, Text, View } from "react-native";
 import { ScreenHero } from "../../components/ScreenHero";
+import { PrimaryButton } from "../../components/PrimaryButton";
+import { API_URL } from "../../config/env";
 import { ScreenSurface } from "../../components/ScreenSurface";
 import { SectionCard } from "../../components/SectionCard";
 import { MetricTile } from "../../components/MetricTile";
 import { StatusChip } from "../../components/StatusChip";
+import { useAuth } from "../../context/AuthContext";
 import { useGreenSync } from "../../context/GreenSyncContext";
+import { getProjectWorkflowProfile, getWorkflowLabels, isAgricProject, isReliefRecoveryProject } from "../../green/projectProfile";
+import { formatWorkflowTaskTypeLabel } from "../../green/workflow";
 import { fetchTreeTasks, fetchTreeTimeline } from "../../api/green";
 import { cacheTreeTasks, cacheTreeTimeline, readCachedTreeTasks, readCachedTreeTimeline } from "../../storage/database";
 import { getErrorMessage } from "../../api/client";
@@ -25,10 +30,32 @@ type TimelineEntry = {
 
 type Props = NativeStackScreenProps<GreenAppStackParamList, "TreeDetail">;
 
+const buildAgentQrDownloadQuery = (user?: { id?: number | null; organization_id?: number | null } | null) => {
+  const pairs: string[] = [];
+  const userId = Number(user?.id || 0);
+  const organizationId = Number(user?.organization_id || 0);
+  if (userId > 0) pairs.push(`user_id=${encodeURIComponent(String(userId))}`);
+  if (organizationId > 0) pairs.push(`organization_id=${encodeURIComponent(String(organizationId))}`);
+  return pairs.join("&");
+};
+
+const appendDownloadQuery = (url: string, query: string) => (query ? `${url}?${query}` : url);
+
 export const TreeDetailScreen = ({ route }: Props) => {
   const { treeId, projectId } = route.params;
-  const { trees, isOnline } = useGreenSync();
+  const { session } = useAuth();
+  const { trees, isOnline, selectedProject } = useGreenSync();
   const tree = trees.find((t) => t.id === treeId) || null;
+  const agricMode = isAgricProject(selectedProject || null);
+  const reliefMode = isReliefRecoveryProject(selectedProject || null);
+  const fieldWorkflowMode = agricMode || reliefMode;
+  const workflowProfile = getProjectWorkflowProfile(selectedProject || null);
+  const workflowLabels = getWorkflowLabels(selectedProject || null);
+  const publicSponsorshipProject = !fieldWorkflowMode && (
+    String(selectedProject?.access_model || "").trim().toLowerCase() === "public_sponsorship" ||
+    Boolean(selectedProject?.public_sponsor_enabled)
+  );
+  const qrDownloadQuery = buildAgentQrDownloadQuery(session?.user);
 
   const [treeTasks, setTreeTasks] = useState<TaskSummary[]>([]);
   const [timeline, setTimeline] = useState<TimelineEntry[]>([]);
@@ -65,11 +92,11 @@ export const TreeDetailScreen = ({ route }: Props) => {
         cacheTreeTimeline("green", treeId, timelineArray),
       ]);
     } catch (err) {
-      setError(getErrorMessage(err, "Failed to load tree details."));
+      setError(getErrorMessage(err, `Failed to load ${workflowLabels.entitySingular.toLowerCase()} details.`));
     } finally {
       setLoading(false);
     }
-  }, [isOnline, treeId]);
+  }, [isOnline, treeId, workflowLabels.entitySingular]);
 
   useEffect(() => {
     void loadData();
@@ -96,11 +123,35 @@ export const TreeDetailScreen = ({ route }: Props) => {
     return "neutral" as const;
   };
 
+  const detailTitle = tree
+    ? agricMode
+      ? String(tree.record_profile_data?.plot_code || tree.record_profile_data?.plot_name || "").trim() || `${workflowLabels.entitySingular} #${tree.project_tree_no || tree.id}`
+      : reliefMode
+        ? String(tree.record_profile_data?.asset_code || tree.record_profile_data?.asset_name || "").trim() || `${workflowLabels.entitySingular} #${tree.project_tree_no || tree.id}`
+      : `${workflowLabels.entitySingular} #${tree.project_tree_no || tree.id}`
+    : `${workflowLabels.entitySingular} #${treeId}`;
+  const detailSubtitle = tree
+    ? `${agricMode ? tree.record_profile_data?.commodity : reliefMode ? tree.record_profile_data?.asset_type : tree.species || `Unknown ${workflowLabels.cropLabel.toLowerCase()}`} | ${tree.status || "Unknown status"}`
+    : "Loading...";
+  const areaLabel = tree?.record_profile_data?.area_hectares != null
+    ? `${tree.record_profile_data.area_hectares} ha`
+    : tree?.existing_area_sqm != null
+      ? `${(Number(tree.existing_area_sqm) / 10000).toFixed(4)} ha`
+      : reliefMode && String(tree?.record_profile_data?.relief_boundary_capture_method || "").startsWith("line")
+        ? "Linear asset"
+        : reliefMode && String(tree?.record_profile_data?.relief_boundary_capture_method || "") === "point"
+          ? "Point site"
+          : "-";
+  const seasonLabel =
+    tree?.record_profile_data?.season_name || tree?.record_profile_data?.season_year
+      ? [tree?.record_profile_data?.season_name, tree?.record_profile_data?.season_year].filter(Boolean).join(" ")
+      : "-";
+
   return (
     <ScreenSurface refreshing={loading} onRefresh={() => void loadData()}>
       <ScreenHero
-        title={tree ? `Tree #${tree.project_tree_no || tree.id}` : `Tree #${treeId}`}
-        subtitle={tree ? `${tree.species || "Unknown species"} | ${tree.status || "Unknown status"}` : "Loading..."}
+        title={detailTitle}
+        subtitle={detailSubtitle}
         badge={tree ? <StatusChip label={tree.status || "Unknown"} tone={chipTone(tree.status)} /> : undefined}
       />
 
@@ -111,23 +162,55 @@ export const TreeDetailScreen = ({ route }: Props) => {
       ) : null}
 
       {tree && (
-        <SectionCard title="Tree details" subtitle={`Project ID: ${projectId}`}>
+        <SectionCard title={agricMode ? "Farm details" : reliefMode ? "Site details" : "Tree details"} subtitle={`Project ID: ${projectId}`}>
           <View style={styles.metricRow}>
-            <MetricTile label="Species" value={tree.species || "-"} />
+            <MetricTile
+              label={workflowLabels.cropLabel}
+              value={String(agricMode ? tree.record_profile_data?.commodity : reliefMode ? tree.record_profile_data?.asset_type : tree.species || "-")}
+            />
             <MetricTile label="Status" value={tree.status || "-"} tone={metricTone(tree.status)} />
           </View>
           <View style={styles.metricRow}>
-            <MetricTile label="Height (m)" value={tree.tree_height_m != null ? String(tree.tree_height_m) : "-"} />
-            <MetricTile label="Age (months)" value={tree.tree_age_months != null ? String(tree.tree_age_months) : "-"} />
+            <MetricTile
+              label={fieldWorkflowMode ? reliefMode ? "Extent" : "Area" : "Height (m)"}
+              value={fieldWorkflowMode ? areaLabel : tree.tree_height_m != null ? String(tree.tree_height_m) : "-"}
+            />
+            <MetricTile
+              label={fieldWorkflowMode ? reliefMode ? "Mapped as" : "Boundary" : "Age (months)"}
+              value={
+                fieldWorkflowMode
+                  ? String((agricMode ? tree.record_profile_data?.boundary_capture_method : tree.record_profile_data?.relief_boundary_capture_method) || (tree.existing_area_sqm ? "polygon_map" : "point")).replaceAll("_", " ")
+                  : tree.tree_age_months != null
+                    ? String(tree.tree_age_months)
+                    : "-"
+              }
+            />
           </View>
           <View style={styles.metricRow}>
-            <MetricTile label="Origin" value={tree.tree_origin || "new_planting"} />
-            <MetricTile label="Planted" value={tree.planting_date ? formatDateTime(tree.planting_date) : "-"} />
+            <MetricTile
+              label={agricMode ? "Season" : reliefMode ? "Damage" : "Origin"}
+              value={agricMode ? seasonLabel : reliefMode ? String(tree.record_profile_data?.damage_level || "-") : tree.tree_origin || "new_planting"}
+            />
+            <MetricTile
+              label={fieldWorkflowMode ? "Observation" : "Planted"}
+              value={tree.planting_date ? formatDateTime(tree.planting_date) : "-"}
+            />
           </View>
           {tree.custodian_name ? (
             <View style={styles.metricRow}>
-              <MetricTile label="Custodian" value={tree.custodian_name} />
+              <MetricTile label={workflowLabels.ownerLabel} value={tree.custodian_name} />
               <MetricTile label="Created by" value={tree.created_by || "-"} />
+            </View>
+          ) : null}
+          {agricMode ? (
+            <View style={styles.metricRow}>
+              <MetricTile label="Irrigation" value={String(tree.record_profile_data?.irrigation_type || "-")} />
+              <MetricTile label="Stage" value={String(tree.record_profile_data?.production_stage || "-")} />
+            </View>
+          ) : reliefMode ? (
+            <View style={styles.metricRow}>
+              <MetricTile label="Response" value={String(tree.record_profile_data?.response_pathway || "-")} />
+              <MetricTile label="Population Served" value={tree.record_profile_data?.population_served != null ? String(tree.record_profile_data.population_served) : "-"} />
             </View>
           ) : null}
           {tree.lng != null && tree.lat != null ? (
@@ -135,20 +218,38 @@ export const TreeDetailScreen = ({ route }: Props) => {
               Coordinates: {Number(tree.lat).toFixed(6)}, {Number(tree.lng).toFixed(6)}
             </Text>
           ) : null}
+          {publicSponsorshipProject && (
+            <View style={{ marginTop: spacing.sm }}>
+              <PrimaryButton
+                label="Print QR Tag"
+                onPress={() => {
+                  const url = appendDownloadQuery(`${API_URL}/green/trees/${treeId}/qr-tag/pdf`, qrDownloadQuery);
+                  Linking.openURL(url).catch(() => {
+                    Alert.alert("Error", "Failed to open QR tag PDF.");
+                  });
+                }}
+                variant="ghost"
+              />
+            </View>
+          )}
         </SectionCard>
       )}
 
       <SectionCard
-        title={`Tasks (${treeTasks.length})`}
-        subtitle="All maintenance and monitoring tasks assigned to this tree."
+        title={`${fieldWorkflowMode ? workflowLabels.activityTitle : "Tasks"} (${treeTasks.length})`}
+        subtitle={
+          fieldWorkflowMode
+            ? `All ${workflowLabels.activityTitle.toLowerCase()} assigned to this ${workflowLabels.entitySingular.toLowerCase()}.`
+            : "All maintenance and monitoring tasks assigned to this tree."
+        }
       >
         {treeTasks.length === 0 && !loading ? (
-          <Text style={styles.emptyText}>No tasks found for this tree.</Text>
+          <Text style={styles.emptyText}>No tasks found for this {workflowLabels.entitySingular.toLowerCase()}.</Text>
         ) : null}
         {treeTasks.map((task) => (
           <View key={task.id} style={styles.taskRow}>
             <View style={styles.taskHeader}>
-              <Text style={styles.taskType}>{task.task_type}</Text>
+              <Text style={styles.taskType}>{formatWorkflowTaskTypeLabel(task.task_type, workflowProfile)}</Text>
               <StatusChip
                 label={task.review_state || task.status || "pending"}
                 tone={reviewBadge(task.review_state || task.status)}
@@ -163,7 +264,7 @@ export const TreeDetailScreen = ({ route }: Props) => {
 
       <SectionCard
         title={`Timeline (${timeline.length})`}
-        subtitle="Historical record of all events for this tree."
+        subtitle={`Historical record of all events for this ${workflowLabels.entitySingular.toLowerCase()}.`}
       >
         {timeline.length === 0 && !loading ? (
           <Text style={styles.emptyText}>No timeline entries available.</Text>
