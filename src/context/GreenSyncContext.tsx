@@ -294,7 +294,15 @@ export const GreenSyncProvider = ({ children }: { children: ReactNode }) => {
           nextTaskSnapshots.forEach((nextTask, id) => {
             const previousTask = previousTaskSnapshots.get(id);
             if (!previousTask) {
-              newTaskCount += 1;
+              // A task can be brand new to this snapshot yet already submitted/approved -
+              // e.g. a field agent's "quick capture" flow creates the task row and submits it
+              // in the same action, so the very first time the client sees that task id it
+              // already has review_state 'submitted'. Only a still-untouched ('none') task is
+              // a genuine fresh assignment worth notifying about; otherwise the agent's own
+              // submission was firing a false "assigned to you" notification back at them.
+              if (nextTask.reviewState === "none") {
+                newTaskCount += 1;
+              }
               return;
             }
             if (suppressedTaskNotificationIdsRef.current.has(id)) {
@@ -361,10 +369,14 @@ export const GreenSyncProvider = ({ children }: { children: ReactNode }) => {
           nextOrderSnapshots.forEach((nextOrder, id) => {
             const previousOrder = previousOrderSnapshots.get(id);
             if (!previousOrder) {
-              if (nextOrder.workType === "planting") {
-                newPlantingOrderCount += 1;
-              } else {
-                newMaintenanceOrderCount += 1;
+              // Same reasoning as the task snapshot above: a work order can appear for the
+              // first time already closed out, so only notify "assigned" when it's still open.
+              if (!isClosedWorkOrderStatus(nextOrder.status)) {
+                if (nextOrder.workType === "planting") {
+                  newPlantingOrderCount += 1;
+                } else {
+                  newMaintenanceOrderCount += 1;
+                }
               }
               return;
             }
