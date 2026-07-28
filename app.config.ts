@@ -10,6 +10,14 @@ const withPlayStoreSafePermissions: ConfigPlugin = (config) =>
     return config;
   });
 
+// NOTE: Play Console recommends AGP 9.0+, and React Native's own gradle-plugin still pins
+// 8.12.0 as of RN 0.86. Pinning AGP to 9.0.0 here was tried and reverted - it broke the
+// Kotlin Android Gradle plugin ("Cannot add extension with name 'kotlin', as there is an
+// extension already registered with that name"), i.e. it's not actually compatible with this
+// project's current Kotlin Gradle Plugin version. Leave AGP on RN's managed default until RN's
+// own gradle-plugin bumps it (tracked upstream), rather than force a version combination that
+// doesn't build.
+
 const config: ExpoConfig = {
   name: "LC Green",
   slug: "landcheck-mobile",
