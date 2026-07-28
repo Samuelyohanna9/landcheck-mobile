@@ -1,4 +1,5 @@
-import { Modal, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { useEffect, useMemo, useState } from "react";
+import { Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { colors, radii, spacing } from "../theme/tokens";
 
@@ -14,27 +15,66 @@ type SelectSheetProps = {
   title: string;
   options: SelectOption[];
   selectedValue?: string | null;
+  searchable?: boolean;
+  searchPlaceholder?: string;
+  emptyMessage?: string;
   onClose: () => void;
   onSelect: (value: string) => void;
 };
 
-export const SelectSheet = ({ visible, title, options, selectedValue, onClose, onSelect }: SelectSheetProps) => {
+export const SelectSheet = ({
+  visible,
+  title,
+  options,
+  selectedValue,
+  searchable = false,
+  searchPlaceholder = "Search",
+  emptyMessage = "No matching options.",
+  onClose,
+  onSelect,
+}: SelectSheetProps) => {
   const insets = useSafeAreaInsets();
+  const [query, setQuery] = useState("");
+
+  useEffect(() => {
+    if (!visible) setQuery("");
+  }, [visible]);
+
+  const filteredOptions = useMemo(() => {
+    const normalizedQuery = query.trim().toLowerCase();
+    if (!normalizedQuery) return options;
+    return options.filter((option) => {
+      const haystack = [option.label, option.description, option.value].join(" ").toLowerCase();
+      return haystack.includes(normalizedQuery);
+    });
+  }, [options, query]);
 
   return (
-    <Modal visible={visible} transparent animationType="slide" statusBarTranslucent presentationStyle="overFullScreen" onRequestClose={onClose}>
+    <Modal visible={visible} transparent animationType="slide" presentationStyle="overFullScreen" onRequestClose={onClose}>
       <View style={styles.backdrop}>
         <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
         <View style={[styles.sheet, { paddingBottom: spacing.xl + Math.max(insets.bottom, spacing.md) }]}>
           <View style={styles.handle} />
           <Text style={styles.title}>{title}</Text>
+          {searchable ? (
+            <TextInput
+              value={query}
+              onChangeText={setQuery}
+              placeholder={searchPlaceholder}
+              placeholderTextColor={colors.textMuted}
+              autoCapitalize="words"
+              autoCorrect={false}
+              style={styles.searchInput}
+            />
+          ) : null}
           <ScrollView
             style={styles.optionsScroll}
             showsVerticalScrollIndicator={false}
             keyboardShouldPersistTaps="handled"
             contentContainerStyle={styles.options}
           >
-            {options.map((option) => {
+            {filteredOptions.length === 0 ? <Text style={styles.emptyText}>{emptyMessage}</Text> : null}
+            {filteredOptions.map((option) => {
               const active = String(selectedValue || "") === option.value;
               return (
                 <Pressable
@@ -91,8 +131,26 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: "900",
   },
+  searchInput: {
+    borderRadius: radii.lg,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.panelSoft,
+    color: colors.text,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.md,
+    fontSize: 15,
+    fontWeight: "700",
+  },
   options: {
     gap: spacing.sm,
+  },
+  emptyText: {
+    color: colors.textMuted,
+    fontSize: 14,
+    lineHeight: 20,
+    textAlign: "center",
+    paddingVertical: spacing.md,
   },
   option: {
     borderRadius: radii.lg,

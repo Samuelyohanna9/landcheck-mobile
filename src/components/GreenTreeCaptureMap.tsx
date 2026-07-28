@@ -9,17 +9,23 @@ import { formatCoordinate, toTitle } from "../utils/format";
 import { polygonGeoJsonFromPoints, type LngLat } from "../utils/geo";
 
 type MapCoordinate = [number, number];
+type DrawTool = "point" | "line" | "polygon";
 
 type GreenTreeCaptureMapProps = {
   trees: TreeSummary[];
   captureLocation: { latitude: number; longitude: number } | null;
   onPickLocation?: (next: { latitude: number; longitude: number }) => void;
   focusTreeId?: number | null;
+  selectedTreeId?: number | null;
+  onSelectTree?: (treeId: number | null) => void;
+  draggableTreeId?: number | null;
+  onDragTree?: (treeId: number, next: { latitude: number; longitude: number }) => void;
+  onBackgroundPress?: () => void;
   mapHeight?: number;
   overlayTitle?: string;
   overlaySubtitle?: string;
   interactive?: boolean;
-  mode?: "point" | "polygon";
+  mode?: DrawTool;
   polygonPoints?: LngLat[];
   onAddPolygonPoint?: (next: { latitude: number; longitude: number }) => void;
   overlayAreas?: Array<{
@@ -27,14 +33,19 @@ type GreenTreeCaptureMapProps = {
     geometry: Record<string, unknown> | null | undefined;
     strokeColor?: string;
     fillColor?: string;
+    label?: string;
+    recordId?: number | null;
   }>;
   fitPoints?: LngLat[] | null;
-  drawTool?: "point" | "polygon";
+  drawTool?: DrawTool;
   showDrawControls?: boolean;
-  onSelectDrawTool?: (tool: "point" | "polygon") => void;
+  onSelectDrawTool?: (tool: DrawTool) => void;
   onClearDraft?: () => void;
   pointToolDisabled?: boolean;
+  lineToolDisabled?: boolean;
   polygonToolDisabled?: boolean;
+  workflowMode?: "green" | "agric" | "relief_recovery" | "csr";
+  showUserLocation?: boolean;
 };
 
 ensureMapboxConfigured();
@@ -72,16 +83,33 @@ const eventToCoordinate = (event: { geometry?: { coordinates?: unknown } } | nul
   return [lng, lat];
 };
 
-const toFeature = (id: string, geometry: Record<string, unknown> | null | undefined) => {
+const toFeature = (
+  id: string,
+  geometry: Record<string, unknown> | null | undefined,
+  label?: string,
+  recordId?: number | null,
+) => {
   if (!geometry || typeof geometry !== "object") return null;
   const row = geometry as Record<string, unknown>;
   if (row.type === "Feature" && row.geometry && typeof row.geometry === "object") {
-    return row;
+    const nextProperties =
+      row.properties && typeof row.properties === "object" ? { ...(row.properties as Record<string, unknown>) } : {};
+    nextProperties.id = id;
+    if (label) nextProperties.label = label;
+    if (Number.isFinite(Number(recordId)) && Number(recordId) > 0) nextProperties.recordId = Number(recordId);
+    return {
+      ...row,
+      properties: nextProperties,
+    };
   }
   if (typeof row.type === "string" && row.coordinates !== undefined) {
     return {
       type: "Feature",
-      properties: { id },
+      properties: {
+        id,
+        ...(label ? { label } : {}),
+        ...(Number.isFinite(Number(recordId)) && Number(recordId) > 0 ? { recordId: Number(recordId) } : {}),
+      },
       geometry: row,
     };
   }
@@ -118,14 +146,74 @@ const statusColor = (tree: TreeSummary) => {
   return colors.primary;
 };
 
+const formatPlotLabel = (tree: TreeSummary) => {
+  const plotCode = String(tree.record_profile_data?.plot_code || "").trim();
+  if (plotCode) return plotCode;
+  const plotName = String(tree.record_profile_data?.plot_name || "").trim();
+  if (plotName) return plotName;
+  return `Plot #${tree.project_tree_no || tree.id}`;
+};
+
+const formatPlotAreaLabel = (tree: TreeSummary) => {
+  const hectares = Number(tree.record_profile_data?.area_hectares);
+  if (Number.isFinite(hectares) && hectares > 0) return `${hectares.toFixed(4)} ha`;
+  const squareMeters = Number(tree.existing_area_sqm || 0);
+  if (!Number.isFinite(squareMeters) || squareMeters <= 0) return "";
+  return `${(squareMeters / 10000).toFixed(4)} ha`;
+};
+
+const formatRecordMapTitle = (tree: TreeSummary, workflowMode: "green" | "agric" | "relief_recovery" | "csr") => {
+  if (workflowMode === "agric") {
+    const plotLabel = formatPlotLabel(tree);
+    const cropLabel = String(tree.record_profile_data?.commodity || tree.species || "").trim() || "Crop not set";
+    return `${plotLabel} | ${cropLabel}`;
+  }
+  if (workflowMode === "relief_recovery") {
+    const siteCode = String((tree.record_profile_data as Record<string, unknown> | undefined)?.asset_code || "").trim();
+    const siteName = String((tree.record_profile_data as Record<string, unknown> | undefined)?.asset_name || tree.species || "").trim() || `Site #${tree.project_tree_no || tree.id}`;
+    const assetType = String((tree.record_profile_data as Record<string, unknown> | undefined)?.asset_type || "").trim() || "Asset";
+    return `${siteCode || siteName} | ${assetType}`;
+  }
+  return `#${tree.project_tree_no || tree.id} | ${tree.species || "Unspecified"}`;
+};
+
+const formatRecordMapSnippet = (tree: TreeSummary, coordinate: MapCoordinate, workflowMode: "green" | "agric" | "relief_recovery" | "csr") => {
+  if (workflowMode === "agric") {
+    return [
+      String(tree.custodian_name || "").trim() || "Farmer not linked",
+      formatPlotAreaLabel(tree),
+      `${formatCoordinate(coordinate[1])}, ${formatCoordinate(coordinate[0])}`,
+    ]
+      .filter(Boolean)
+      .join(" | ");
+  }
+  if (workflowMode === "relief_recovery") {
+    const assetType = String((tree.record_profile_data as Record<string, unknown> | undefined)?.asset_type || "").trim();
+    return [
+      String(tree.custodian_name || "").trim() || "Beneficiary not linked",
+      assetType || "Site type not set",
+      formatPlotAreaLabel(tree),
+      `${formatCoordinate(coordinate[1])}, ${formatCoordinate(coordinate[0])}`,
+    ]
+      .filter(Boolean)
+      .join(" | ");
+  }
+  return `${toTitle(tree.status)} | ${formatCoordinate(coordinate[1])}, ${formatCoordinate(coordinate[0])}`;
+};
+
 export const GreenTreeCaptureMap = ({
   trees,
   captureLocation,
   onPickLocation,
   focusTreeId,
+  selectedTreeId = null,
+  onSelectTree,
+  draggableTreeId = null,
+  onDragTree,
+  onBackgroundPress,
   mapHeight = 320,
-  overlayTitle = "Tap the map to place the new tree",
-  overlaySubtitle = "Existing trees remain visible for context. The green marker is the tree you are about to save.",
+  overlayTitle,
+  overlaySubtitle,
   interactive = true,
   mode = "point",
   polygonPoints = [],
@@ -137,12 +225,29 @@ export const GreenTreeCaptureMap = ({
   onSelectDrawTool,
   onClearDraft,
   pointToolDisabled = false,
+  lineToolDisabled = false,
   polygonToolDisabled = false,
+  workflowMode = "green",
+  showUserLocation = true,
 }: GreenTreeCaptureMapProps) => {
   const [mapReady, setMapReady] = useState(false);
   const [currentZoom, setCurrentZoom] = useState(DEFAULT_ZOOM);
   const cameraRef = useRef<any>(null);
   const lastCaptureSignatureRef = useRef("");
+  const resolvedOverlayTitle =
+    overlayTitle ??
+    (workflowMode === "agric"
+      ? "Tap the map to set the plot anchor"
+      : workflowMode === "relief_recovery"
+        ? "Tap the map to set the site anchor"
+        : "Tap the map to place the new tree");
+  const resolvedOverlaySubtitle =
+    overlaySubtitle ??
+    (workflowMode === "agric"
+      ? "Existing mapped plots remain visible for context. The green marker is the plot anchor you are about to save."
+      : workflowMode === "relief_recovery"
+        ? "Existing mapped sites remain visible for context. The green marker is the site anchor you are about to save."
+      : "Existing trees remain visible for context. The green marker is the tree you are about to save.");
 
   const treeMarkers = useMemo(
     () =>
@@ -180,7 +285,7 @@ export const GreenTreeCaptureMap = ({
       overlayAreas
         .map((area) => ({
           ...area,
-          feature: toFeature(area.id, area.geometry),
+          feature: toFeature(area.id, area.geometry, area.label, area.recordId),
         }))
         .filter(
           (
@@ -191,6 +296,9 @@ export const GreenTreeCaptureMap = ({
         ),
     [overlayAreas],
   );
+  const isFieldWorkflowMode = workflowMode === "agric" || workflowMode === "relief_recovery";
+  const showTreeMarkers = !isFieldWorkflowMode;
+  const isPolylineMode = mode === "line" || mode === "polygon";
 
   const focusCoordinates = useMemo(() => {
     if (mode === "point" && captureCoordinate) return [captureCoordinate];
@@ -277,7 +385,7 @@ export const GreenTreeCaptureMap = ({
       <View style={styles.missingWrap}>
         <EmptyState
           title="Mapbox token missing"
-          subtitle="Add EXPO_PUBLIC_MAPBOX_TOKEN to landcheck-mobile/.env so the native Green map can load."
+          subtitle="Add EXPO_PUBLIC_MAPBOX_TOKEN to landcheck-mobile/.env so the native field map can load."
         />
       </View>
     );
@@ -288,7 +396,7 @@ export const GreenTreeCaptureMap = ({
       <View style={styles.missingWrap}>
         <EmptyState
           title="Native map module not installed in this app build"
-          subtitle="Rebuild and reinstall the Android/iOS app after the Mapbox integration. The current binary was launched without the native Mapbox module."
+          subtitle="Rebuild and reinstall the Android/iOS app after the Mapbox integration. The current binary was launched without the native field map module."
         />
       </View>
     );
@@ -321,7 +429,11 @@ export const GreenTreeCaptureMap = ({
                 if (!coordinate) return;
                 onPickLocation({ longitude: coordinate[0], latitude: coordinate[1] });
               }
-            : interactive && mode === "polygon" && onAddPolygonPoint
+            : interactive && mode === "point" && onBackgroundPress
+              ? () => {
+                  onBackgroundPress();
+                }
+            : interactive && isPolylineMode && onAddPolygonPoint
               ? (feature) => {
                   const coordinate = eventToCoordinate(feature);
                   if (!coordinate) return;
@@ -331,41 +443,118 @@ export const GreenTreeCaptureMap = ({
         }
       >
         <MapboxNative.Camera ref={cameraRef} defaultSettings={{ centerCoordinate: DEFAULT_CENTER, zoomLevel: DEFAULT_ZOOM }} />
-        <MapboxNative.LocationPuck
-          visible
-          puckBearing="heading"
-          puckBearingEnabled
-          pulsing={{ isEnabled: true, color: colors.primary, radius: "accuracy" }}
-        />
+        {showUserLocation ? (
+          <MapboxNative.LocationPuck
+            visible
+            puckBearing="heading"
+            puckBearingEnabled
+            pulsing={{ isEnabled: true, color: colors.primary, radius: "accuracy" }}
+          />
+        ) : null}
 
-        {treeMarkers.map(({ tree, coordinate }) => (
-          <MapboxNative.PointAnnotation
-            key={`tree-${tree.id}`}
-            id={`tree-${tree.id}`}
-            coordinate={coordinate}
-            title={`#${tree.project_tree_no || tree.id} | ${tree.species || "Unspecified"}`}
-            snippet={`${toTitle(tree.status)} | ${formatCoordinate(coordinate[1])}, ${formatCoordinate(coordinate[0])}`}
-          >
-            <View style={[styles.treeMarker, tree.id === focusTreeId && styles.focusTreeMarker, { backgroundColor: statusColor(tree) }]} />
-          </MapboxNative.PointAnnotation>
-        ))}
+        {showTreeMarkers
+          ? treeMarkers.map(({ tree, coordinate }) => (
+              <MapboxNative.PointAnnotation
+                key={`tree-${tree.id}`}
+                id={`tree-${tree.id}`}
+                coordinate={coordinate}
+                draggable={interactive && draggableTreeId === tree.id}
+                title={formatRecordMapTitle(tree, workflowMode)}
+                snippet={formatRecordMapSnippet(tree, coordinate, workflowMode)}
+                onSelected={onSelectTree ? () => onSelectTree(tree.id) : undefined}
+                onDeselected={onSelectTree ? () => onSelectTree(null) : undefined}
+                onDragEnd={
+                  interactive && draggableTreeId === tree.id && onDragTree
+                    ? (feature) => {
+                        const next = eventToCoordinate(feature);
+                        if (!next) return;
+                        onDragTree(tree.id, { longitude: next[0], latitude: next[1] });
+                      }
+                    : undefined
+                }
+              >
+                <View
+                  style={[
+                    styles.treeMarker,
+                    (tree.id === focusTreeId || tree.id === selectedTreeId) && styles.focusTreeMarker,
+                    draggableTreeId === tree.id && styles.draggingTreeMarker,
+                    { backgroundColor: statusColor(tree) },
+                  ]}
+                />
+              </MapboxNative.PointAnnotation>
+            ))
+          : null}
 
         {overlayFeatures.map((area) =>
           area.feature ? (
-            <MapboxNative.ShapeSource key={`overlay-${area.id}`} id={`overlay-${area.id}`} shape={area.feature as never}>
+            <MapboxNative.ShapeSource
+              key={`overlay-${area.id}`}
+              id={`overlay-${area.id}`}
+              shape={area.feature as never}
+              onPress={
+                onSelectTree && !isPolylineMode
+                  ? (event: any) => {
+                      const pressedFeatures = Array.isArray(event?.features) ? event.features : [];
+                      const rawRecordId = pressedFeatures[0]?.properties?.recordId;
+                      const recordId = Number(rawRecordId || 0);
+                      if (recordId > 0) onSelectTree(recordId);
+                    }
+                  : undefined
+              }
+            >
               <MapboxNative.FillLayer
                 id={`overlay-fill-${area.id}`}
                 style={{
-                  fillColor: area.fillColor || "rgba(35,146,82,0.12)",
-                  fillOutlineColor: area.strokeColor || "rgba(35,146,82,0.84)",
+                  fillColor:
+                    area.fillColor ||
+                    (!isFieldWorkflowMode ? "rgba(35,146,82,0.12)" : "rgba(220,38,38,0.09)"),
+                  fillOutlineColor:
+                    area.strokeColor ||
+                    (!isFieldWorkflowMode ? "rgba(35,146,82,0.84)" : "rgba(185,28,28,0.92)"),
                 }}
               />
               <MapboxNative.LineLayer
                 id={`overlay-line-${area.id}`}
                 style={{
-                  lineColor: area.strokeColor || "rgba(35,146,82,0.9)",
-                  lineWidth: 2,
+                  lineColor:
+                    area.strokeColor ||
+                    (!isFieldWorkflowMode ? "rgba(35,146,82,0.9)" : "rgba(185,28,28,0.96)"),
+                  lineWidth: !isFieldWorkflowMode ? 2 : 2.6,
                 }}
+              />
+              <MapboxNative.CircleLayer
+                id={`overlay-point-${area.id}`}
+                style={{
+                  circleColor:
+                    area.strokeColor ||
+                    (!isFieldWorkflowMode ? "rgba(35,146,82,0.95)" : "rgba(185,28,28,0.96)"),
+                  circleRadius: !isFieldWorkflowMode ? 4.5 : 5.5,
+                  circleStrokeColor: "#fff8f8",
+                  circleStrokeWidth: !isFieldWorkflowMode ? 1 : 1.2,
+                }}
+              />
+              <MapboxNative.SymbolLayer
+                id={`overlay-label-${area.id}`}
+                style={
+                  {
+                    textField: ["get", "label"],
+                    textSize: 11,
+                    textColor: !isFieldWorkflowMode ? "#124c32" : "#7f1d1d",
+                    textHaloColor: !isFieldWorkflowMode ? "#eefaf1" : "#fff7f7",
+                    textHaloWidth: 1.2,
+                    textAllowOverlap: false,
+                    textIgnorePlacement: false,
+                    textMaxWidth: 14,
+                    textAnchor: "center",
+                    textJustify: "center",
+                    textPitchAlignment: "map",
+                    textOptional: true,
+                    symbolPlacement: "point",
+                    textOffset: [0, 0],
+                    textFont: ["Open Sans Semibold"],
+                    textLineHeight: 1.1,
+                  } as any
+                }
               />
             </MapboxNative.ShapeSource>
           ) : null,
@@ -402,7 +591,7 @@ export const GreenTreeCaptureMap = ({
           </MapboxNative.ShapeSource>
         ) : null}
 
-        {mode === "polygon"
+        {isPolylineMode
           ? polygonPoints.map((point, index) => (
               <MapboxNative.PointAnnotation
                 key={`polygon-vertex-${index}`}
@@ -415,15 +604,15 @@ export const GreenTreeCaptureMap = ({
             ))
           : null}
 
-        {captureCoordinate && onPickLocation && mode === "point" ? (
+        {captureCoordinate && mode === "point" ? (
           <MapboxNative.PointAnnotation
             id="capture-point"
             coordinate={captureCoordinate}
-            draggable={interactive}
+            draggable={Boolean(interactive && onPickLocation)}
             title="Captured position"
-            snippet={interactive ? "Drag to refine the position." : "Recorded activity position."}
+            snippet={interactive && onPickLocation ? "Drag to refine the position." : "Recorded activity position."}
             onDragEnd={
-              interactive
+              interactive && onPickLocation
                 ? (feature) => {
                     const coordinate = eventToCoordinate(feature);
                     if (!coordinate) return;
@@ -459,6 +648,13 @@ export const GreenTreeCaptureMap = ({
             <Ionicons name="location-sharp" size={18} color={drawTool === "point" ? colors.panel : colors.panel} />
           </Pressable>
           <Pressable
+            onPress={() => onSelectDrawTool?.("line")}
+            disabled={lineToolDisabled}
+            style={[styles.drawButton, drawTool === "line" && styles.drawButtonActive, lineToolDisabled && styles.drawButtonDisabled]}
+          >
+            <MaterialCommunityIcons name="vector-line" size={18} color={colors.panel} />
+          </Pressable>
+          <Pressable
             onPress={() => onSelectDrawTool?.("polygon")}
             disabled={polygonToolDisabled}
             style={[styles.drawButton, drawTool === "polygon" && styles.drawButtonActive, polygonToolDisabled && styles.drawButtonDisabled]}
@@ -472,8 +668,8 @@ export const GreenTreeCaptureMap = ({
       ) : null}
 
       <View style={styles.overlay}>
-        <Text style={styles.overlayTitle}>{overlayTitle}</Text>
-        <Text style={styles.overlayText}>{overlaySubtitle}</Text>
+        <Text style={styles.overlayTitle}>{resolvedOverlayTitle}</Text>
+        <Text style={styles.overlayText}>{resolvedOverlaySubtitle}</Text>
       </View>
     </View>
   );
@@ -577,6 +773,13 @@ const styles = StyleSheet.create({
     height: 18,
     borderRadius: 9,
     borderWidth: 3,
+  },
+  draggingTreeMarker: {
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    borderWidth: 3,
+    borderColor: colors.warning,
   },
   vertexMarker: {
     width: 12,

@@ -3,7 +3,7 @@ import * as ImagePicker from "expo-image-picker";
 import * as Location from "expo-location";
 import { useFocusEffect, useNavigation, useRoute } from "@react-navigation/native";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ActivityIndicator, Alert, Image, Linking, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import { ActivityIndicator, Alert, Linking, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import { Image as ExpoImage } from "expo-image";
 import { DateField } from "../../components/DateField";
 import { EmptyState } from "../../components/EmptyState";
@@ -26,13 +26,14 @@ import {
   normalizeTreeStatus,
   PLANTING_TASK_TYPES,
 } from "../../green/workflow";
-import { normalizePhotoList } from "../../green/normalize";
+import { normalizePhotoList, normalizeMapGeometry } from "../../green/normalize";
 import { getProjectWorkflowProfile, getWorkflowLabels, isAgricProject, isReliefRecoveryProject } from "../../green/projectProfile";
 import { isHiddenSupportPlaceholderTree } from "../../green/treeRecords";
 import { colors, radii, spacing } from "../../theme/tokens";
 import { API_URL } from "../../config/env";
 import type { DraftPhoto, TaskSummary } from "../../types/domain";
 import { formatCoordinate, formatDate, formatDateTime, toTitle } from "../../utils/format";
+import { coordinateSummaryFromGeometry, polygonCentroid, type LngLat } from "../../utils/geo";
 
 type TaskDetailMode = "maintenance" | "review";
 type TaskFieldErrors = Partial<
@@ -60,6 +61,9 @@ const buildAgentQrDownloadQuery = (user?: { id?: number | null; organization_id?
   const organizationId = Number(user?.organization_id || 0);
   if (userId > 0) pairs.push(`user_id=${encodeURIComponent(String(userId))}`);
   if (organizationId > 0) pairs.push(`organization_id=${encodeURIComponent(String(organizationId))}`);
+  // Cache-bust: without this, some Android browsers/PDF viewers reopen a previously
+  // downloaded copy for what looks like the same URL instead of fetching a fresh one.
+  pairs.push(`_ts=${Date.now()}`);
   return pairs.join("&");
 };
 const appendDownloadQuery = (url: string, query: string) => (query ? `${url}?${query}` : url);
@@ -160,6 +164,44 @@ export const GreenTaskDetailScreen = () => {
         ? taskTree?.record_profile_data?.asset_type || taskTree?.species || "Unspecified"
         : taskTree?.species || "Unspecified",
   ).trim() || "Unspecified";
+
+  const taskPlotOverlayAreas = useMemo(() => {
+    if (!taskTree?.existing_area_geojson || hiddenPlaceholderTree) return [];
+    const geometry = normalizeMapGeometry(taskTree.existing_area_geojson);
+    if (!geometry) return [];
+    return [{
+      id: `task-plot-${taskTree.id}`,
+      geometry,
+      strokeColor: "rgba(185,28,28,0.94)",
+      fillColor: "rgba(220,38,38,0.08)",
+      label: `${taskTree.custodian_name || (agricMode ? "Farmer" : "Beneficiary")}: ${taskTargetCrop}`,
+    }];
+  }, [taskTree, hiddenPlaceholderTree, taskTargetCrop, agricMode]);
+
+  const taskPlotDirectionPoint = useMemo(() => {
+    if (!taskTree?.existing_area_geojson || hiddenPlaceholderTree) return null;
+    const { points } = coordinateSummaryFromGeometry(taskTree.existing_area_geojson);
+    if (points.length === 0) {
+      if (taskTree.lng !== null && taskTree.lat !== null) return { lng: Number(taskTree.lng), lat: Number(taskTree.lat) };
+      return null;
+    }
+    if (points.length >= 3) {
+      const center = polygonCentroid(points);
+      if (center) return { lng: center.lng, lat: center.lat };
+    }
+    return { lng: points[0][0], lat: points[0][1] };
+  }, [taskTree, hiddenPlaceholderTree]);
+
+  const taskMapFitPoints = useMemo(() => {
+    if (taskPlotOverlayAreas.length > 0 && taskTree?.existing_area_geojson) {
+      const pts = coordinateSummaryFromGeometry(taskTree.existing_area_geojson).points;
+      if (pts.length > 0) return pts;
+    }
+    if (taskTree?.lat !== null && taskTree?.lng !== null && taskTree?.lat !== undefined && taskTree?.lng !== undefined) {
+      return [[Number(taskTree.lng), Number(taskTree.lat)]] as LngLat[];
+    }
+    return null;
+  }, [taskTree, taskPlotOverlayAreas]);
 
   const [notes, setNotes] = useState("");
   const [treeStatus, setTreeStatus] = useState("healthy");
@@ -489,6 +531,8 @@ export const GreenTaskDetailScreen = () => {
           overlayTitle={taskMapOverlayTitle}
           overlaySubtitle={taskMapOverlaySubtitle}
           workflowMode={agricMode ? "agric" : reliefMode ? "relief_recovery" : "green"}
+          overlayAreas={taskPlotOverlayAreas}
+          fitPoints={taskMapFitPoints}
         />
         {hiddenPlaceholderTree ? (
           <Text style={styles.mapHint}>{reliefMode ? "Site target: no saved site GPS yet. Capture the site location during this relief visit." : "Plot target: no saved plot GPS yet. Capture the farm location during this support visit."}</Text>
@@ -505,6 +549,23 @@ export const GreenTaskDetailScreen = () => {
                       }`)
                 : `${workflowLabels.entitySingular} target: #${task.tree_id}`}
             </Text>
+            {taskPlotDirectionPoint ? (
+              <View style={{ marginTop: spacing.xs }}>
+                <PrimaryButton
+                  label={`Get Directions to ${agricMode ? "Plot" : reliefMode ? "Site" : workflowLabels.entitySingular}`}
+                  onPress={() => void openDirections(taskPlotDirectionPoint.lng, taskPlotDirectionPoint.lat)}
+                  variant="ghost"
+                />
+              </View>
+            ) : taskTree && taskTree.lat !== null && taskTree.lng !== null ? (
+              <View style={{ marginTop: spacing.xs }}>
+                <PrimaryButton
+                  label={`Get Directions to ${agricMode ? "Plot" : reliefMode ? "Site" : workflowLabels.entitySingular}`}
+                  onPress={() => void openDirections(Number(taskTree.lng), Number(taskTree.lat))}
+                  variant="ghost"
+                />
+              </View>
+            ) : null}
             {publicSponsorshipProject && (
               <View style={{ marginTop: spacing.xs }}>
                 <PrimaryButton
@@ -708,7 +769,7 @@ export const GreenTaskDetailScreen = () => {
             <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.photoRow}>
               {photos.map((photo) => (
                 <Pressable key={photo.uri} onPress={() => removeDraftPhoto(photo.uri)} style={styles.photoWrap}>
-                  <Image source={{ uri: photo.uri }} style={styles.photo} resizeMode="cover" />
+                  <ExpoImage source={{ uri: photo.uri }} contentFit="cover" style={styles.photo} />
                   <View style={styles.photoPill}>
                     <Text style={styles.photoPillText}>Remove</Text>
                   </View>

@@ -9,6 +9,8 @@ import { StatusChip } from "../../components/StatusChip";
 import { useGreenSync } from "../../context/GreenSyncContext";
 import { fetchDonorReportUrl } from "../../api/green";
 import { useAuth } from "../../context/AuthContext";
+import { getWorkflowLabels, isAgricProject, isCsrProject, isReliefRecoveryProject } from "../../green/projectProfile";
+import { filterVisibleTreeRecords } from "../../green/treeRecords";
 import { colors, spacing } from "../../theme/tokens";
 
 export const DonorReportScreen = () => {
@@ -18,9 +20,14 @@ export const DonorReportScreen = () => {
   const [includePhotos, setIncludePhotos] = useState(false);
 
   const projectId = selectedProject?.id;
+  const workflowLabels = getWorkflowLabels(selectedProject || null);
+  const agricMode = isAgricProject(selectedProject || null);
+  const reliefMode = isReliefRecoveryProject(selectedProject || null);
+  const csrMode = isCsrProject(selectedProject || null);
+  const visibleTrees = filterVisibleTreeRecords(trees);
 
-  const healthyTrees = trees.filter((t) => t.status === "healthy" || t.status === "alive").length;
-  const totalTrees = trees.length;
+  const healthyTrees = visibleTrees.filter((t) => t.status === "healthy" || t.status === "alive").length;
+  const totalTrees = visibleTrees.length;
 
   const handleDownload = useCallback(async () => {
     if (!projectId || !isOnline) {
@@ -30,46 +37,76 @@ export const DonorReportScreen = () => {
     setDownloading(true);
     try {
       const actorName = String(session?.user.full_name || "").trim();
-      const url = fetchDonorReportUrl(projectId, includePhotos, actorName || undefined);
+      const url = fetchDonorReportUrl(projectId, includePhotos, agricMode || reliefMode ? undefined : actorName || undefined);
       await Linking.openURL(url);
     } catch {
       Alert.alert("Error", "Failed to open the donor report. Please try again.");
     } finally {
       setDownloading(false);
     }
-  }, [includePhotos, isOnline, projectId, session?.user.full_name]);
+  }, [agricMode, reliefMode, includePhotos, isOnline, projectId, session?.user.full_name]);
 
   return (
     <ScreenSurface>
       <ScreenHero
-        title="Donor report"
+        title={agricMode ? "Agric programme report" : reliefMode ? "Relief programme report" : csrMode ? "CSR implementation report" : "Donor report"}
         subtitle={selectedProject ? `Project: ${selectedProject.name}` : "No project selected"}
         badge={<StatusChip label={isOnline ? "Online" : "Offline"} tone={isOnline ? "online" : "offline"} />}
       />
 
-      <SectionCard title="Report summary" subtitle="A PDF overview of the project for donors and stakeholders.">
+      <SectionCard
+        title="Report summary"
+        subtitle={
+          agricMode
+            ? "A PDF evidence pack for organisations: farmer registry, mapped plots, support delivery, and plot detail pages."
+            : reliefMode
+              ? "A PDF evidence pack for organisations: beneficiary registry, mapped sites, support delivery, and site detail pages."
+              : csrMode
+                ? "A PDF evidence pack for CSR managers: programme setup, mapped trees, field implementation, and verification-ready detail pages."
+            : "A PDF overview of the project for donors and stakeholders."
+        }
+      >
         <View style={styles.metricRow}>
-          <MetricTile label="Total trees" value={totalTrees} tone="success" />
-          <MetricTile label="Healthy" value={healthyTrees} tone="success" />
+          <MetricTile label={workflowLabels.totalLabel} value={totalTrees} tone="success" />
+          <MetricTile label={workflowLabels.healthyLabel} value={healthyTrees} tone="success" />
         </View>
         <View style={styles.metricRow}>
-          <MetricTile label="Species count" value={new Set(trees.map((t) => t.species).filter(Boolean)).size} />
+          <MetricTile label={workflowLabels.cropDistributionTitle} value={new Set(visibleTrees.map((t) => t.species).filter(Boolean)).size} />
           <MetricTile label="Project" value={selectedProject?.name || "-"} />
         </View>
       </SectionCard>
 
-      <SectionCard title="Generate PDF" subtitle="Opens the server-generated PDF report in your browser. Requires network connectivity.">
+      <SectionCard
+        title="Generate PDF"
+        subtitle={
+          agricMode
+            ? "Opens the Agric programme PDF in your browser. Includes plot maps, farmer details, and optional plot photos. Requires network connectivity."
+            : reliefMode
+              ? "Opens the Relief programme PDF in your browser. Includes site maps, beneficiary details, and optional site photos. Requires network connectivity."
+              : csrMode
+                ? "Opens the CSR implementation PDF in your browser. Includes implementation maps, tree detail pages, and optional photo evidence. Requires network connectivity."
+            : "Opens the server-generated PDF report in your browser. Requires network connectivity."
+        }
+      >
         <Pressable onPress={() => setIncludePhotos((prev) => !prev)} style={styles.toggleRow}>
           <View style={[styles.checkbox, includePhotos && styles.checkboxChecked]}>
             {includePhotos ? <Text style={styles.checkboxTick}>✓</Text> : null}
           </View>
           <View style={styles.toggleTextBlock}>
-            <Text style={styles.toggleTitle}>Include tree photos in appendix</Text>
-            <Text style={styles.toggleHint}>Photo pages are appended after analytics and record pages.</Text>
+            <Text style={styles.toggleTitle}>
+              {agricMode ? "Include plot photos in detail pages" : reliefMode ? "Include site photos in detail pages" : `Include ${workflowLabels.entityPlural.toLowerCase()} photos in appendix`}
+            </Text>
+            <Text style={styles.toggleHint}>
+              {agricMode
+                ? "Each mapped plot page will embed its available photo evidence when this is enabled."
+                : reliefMode
+                  ? "Each mapped site page will embed its available photo evidence when this is enabled."
+                : "Photo pages are appended after analytics and record pages."}
+            </Text>
           </View>
         </Pressable>
         <PrimaryButton
-          label={downloading ? "Opening..." : "Download donor report PDF"}
+          label={downloading ? "Opening..." : agricMode ? "Download Agric programme PDF" : reliefMode ? "Download Relief programme PDF" : csrMode ? "Download CSR implementation PDF" : "Download donor report PDF"}
           onPress={() => void handleDownload()}
           disabled={!isOnline || !projectId || downloading}
         />

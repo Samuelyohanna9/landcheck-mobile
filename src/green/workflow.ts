@@ -5,11 +5,34 @@ export const normalizeTaskState = (value?: string | null) =>
 
 export const normalizeTreeStatus = (value?: string | null) => normalizeTaskState(value);
 
+const titleCaseToken = (value: string) => value.charAt(0).toUpperCase() + value.slice(1);
+
+export const formatWorkflowTaskTypeLabel = (
+  value?: string | null,
+  workflowMode: boolean | "green" | "agric" | "relief_recovery" | "csr" = false,
+) => {
+  const normalized = normalizeTaskState(value);
+  const profile = workflowMode === true ? "agric" : workflowMode || "green";
+  if (profile === "agric") {
+    if (normalized === FIELD_CAPTURE_TASK_TYPE) return "Field Capture";
+    if (normalized === "supervision" || normalized === "maintenance") return "Field Visit";
+  }
+  if (profile === "relief_recovery") {
+    if (normalized === FIELD_CAPTURE_TASK_TYPE) return "Site Capture";
+    if (normalized === "supervision" || normalized === "maintenance") return "Relief Visit";
+  }
+  return normalized
+    .split("_")
+    .filter(Boolean)
+    .map(titleCaseToken)
+    .join(" ") || "Task";
+};
+
 export const formatTreeConditionLabel = (value?: string | null) =>
   normalizeTreeStatus(value)
     .split("_")
     .filter(Boolean)
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .map(titleCaseToken)
     .join(" ") || "Healthy";
 
 export const HEALTHY_TREE_STATUSES = new Set(["alive", "healthy"]);
@@ -41,6 +64,7 @@ export const TASK_STATUS_OPTIONS = [
 ];
 
 export const PLANTING_TASK_TYPES = new Set(["planting", "existing_inventory_intake"]);
+export const FIELD_CAPTURE_TASK_TYPE = "field_capture";
 
 export const EXISTING_TREE_STATUS_OPTIONS = [
   { value: "healthy", label: "Healthy" },

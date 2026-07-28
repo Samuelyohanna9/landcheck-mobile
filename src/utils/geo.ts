@@ -51,6 +51,26 @@ export const polygonCentroid = (points: LngLat[]) => {
   };
 };
 
+export const polygonAreaSquareMeters = (points: LngLat[]) => {
+  const ring = closeRing(points);
+  if (ring.length < 4) return 0;
+  const averageLatRadians =
+    (ring.reduce((sum, point) => sum + Number(point[1]), 0) / ring.length) * (Math.PI / 180);
+  const metersPerDegreeLat = 111320;
+  const metersPerDegreeLng = 111320 * Math.cos(averageLatRadians);
+  let area = 0;
+  for (let i = 0; i < ring.length - 1; i += 1) {
+    const [lng1, lat1] = ring[i];
+    const [lng2, lat2] = ring[i + 1];
+    const x1 = Number(lng1) * metersPerDegreeLng;
+    const y1 = Number(lat1) * metersPerDegreeLat;
+    const x2 = Number(lng2) * metersPerDegreeLng;
+    const y2 = Number(lat2) * metersPerDegreeLat;
+    area += x1 * y2 - x2 * y1;
+  }
+  return Math.abs(area) * 0.5;
+};
+
 export const extractAllCoordinates = (geometry: unknown): LngLat[] => {
   if (!geometry || typeof geometry !== "object") return [];
   const payload = geometry as { type?: string; coordinates?: unknown; geometry?: unknown; features?: unknown[] };

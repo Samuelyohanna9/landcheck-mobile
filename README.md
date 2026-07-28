@@ -1,5 +1,7 @@
 # LC Green Mobile
 
+For the full local stack setup, including the API, web routes, emulator flow, and physical device flow, see [LOCAL_DEVELOPMENT.md](../LOCAL_DEVELOPMENT.md).
+
 Native mobile workspace for `LandCheck Green`, built with Expo/React Native for Android and iOS local testing.
 
 ## Project structure
@@ -32,6 +34,25 @@ npm run prebuild
 npm run android:native
 npm run ios:native
 ```
+
+## Google Play Release Build
+
+Use an Android App Bundle for Play Store submission:
+
+```bash
+npm run android:bundle:release
+```
+
+Bundle output:
+
+- `android/app/build/outputs/bundle/release/app-release.aab`
+
+Notes:
+
+- Release signing must be configured in `android/keystore.properties`.
+- The current Android package id is `online.landcheck.mobile`.
+- The current app version in config is `1.0.1` with Android `versionCode 2`.
+- Recent local Android builds were already using Android API 36, which is above the current Play minimum target requirement.
 
 ## Current scope
 

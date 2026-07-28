@@ -13,7 +13,7 @@ import {
   createGreenTree,
   fetchDistributionAllocations,
   fetchProjectCustodians,
-  fetchProjects,
+  fetchProjectsForFieldUser,
   fetchTasks,
   fetchTrees,
   fetchWorkOrders,
@@ -40,6 +40,8 @@ import {
   upsertCachedTree,
 } from "../storage/database";
 import { deleteStoredPhoto, persistDraftPhotos } from "./fileStore";
+import { hydrateTreePhotosForOffline } from "./treePhotoCache";
+import { cacheGreenWorkspaceIndex, syncGreenProjectCacheBundle } from "./greenWorkspaceCache";
 import { normalizePhotoList, normalizeTaskSummary, normalizeTreeSummary } from "../green/normalize";
 
 const APP_MODE = "green";
@@ -125,14 +127,22 @@ const uploadStoredPhotos = async ({
   folder,
   treeId,
   taskId,
+  onProgress,
 }: {
   photos: Array<{ uri: string; fileName?: string | null; mimeType?: string | null }>;
   folder: "trees" | "tasks";
   treeId?: number | null;
   taskId?: number | null;
+  onProgress?: (progress: PhotoUploadProgress) => void;
 }) => {
   const uploaded: string[] = [];
-  for (const photo of photos) {
+  const total = photos.length;
+  for (const [index, photo] of photos.entries()) {
+    onProgress?.({
+      current: index + 1,
+      total,
+      message: total === 1 ? "Uploading photo..." : `Uploading photo ${index + 1} of ${total}...`,
+    });
     const url = await uploadGreenPhoto({
       photo,
       folder,
@@ -183,24 +193,16 @@ const enqueueDeferredPhotoUpload = async ({
 
 export const refreshGreenCaches = async (session: MobileSession, projectId?: number | null) => {
   const actorName = String(session.user.full_name || "").trim();
-  const [projects] = await Promise.all([fetchProjects(session.user.organization_id, actorName)]);
+  const projects = await fetchProjectsForFieldUser(session.user);
   await cacheProjects(APP_MODE, projects);
 
   if (projectId && projectId > 0) {
-    const [tasks, trees, custodians, allocations, workOrders] = await Promise.all([
-      fetchTasks(projectId, actorName),
-      fetchTrees(projectId, actorName),
-      fetchProjectCustodians(projectId),
-      fetchDistributionAllocations(projectId),
-      fetchWorkOrders(projectId, actorName),
-    ]);
-    await Promise.all([
-      cacheTasks(APP_MODE, projectId, tasks),
-      cacheTrees(APP_MODE, projectId, trees),
-      cacheCustodians(APP_MODE, projectId, custodians),
-      cacheDistributionAllocations(APP_MODE, projectId, allocations),
-      cacheWorkOrders(APP_MODE, projectId, workOrders),
-    ]);
+    await syncGreenProjectCacheBundle(session, projectId, {
+      actorName,
+      includeProjectDetail: true,
+      includeTreeTimelines: true,
+      includeMapPack: true,
+    });
   }
   await updateLastSyncedAt(APP_MODE, nowIso());
 };
@@ -225,6 +227,7 @@ export const queueTreeCreation = async (session: MobileSession, input: GreenTree
     tree_age_months: input.treeAgeMonths ?? null,
     inventory_tree_count: input.inventoryTreeCount ?? 1,
     existing_area_geojson: input.existingAreaGeojson ?? null,
+    record_profile_data: input.recordProfileData ?? null,
     lng: input.lng,
     lat: input.lat,
     photo_urls: storedPhotos.map((photo) => photo.uri),
@@ -240,6 +243,8 @@ export const queueTreeCreation = async (session: MobileSession, input: GreenTree
       ...input,
       localTreeId,
       createdBy: session.user.full_name,
+      createdByUserId: Number(session.user.id || 0) || null,
+      createdByOrganizationId: session.user.organization_id ?? null,
       photos: storedPhotos,
     },
   });
@@ -260,6 +265,7 @@ export const queueTreeUpdate = async (input: GreenTreeUpdateInput) => {
     custodian_id: input.custodianId ?? tree.custodian_id ?? null,
     inventory_tree_count: input.inventoryTreeCount ?? tree.inventory_tree_count ?? 1,
     existing_area_geojson: input.existingAreaGeojson ?? tree.existing_area_geojson ?? null,
+    record_profile_data: input.recordProfileData ?? tree.record_profile_data ?? null,
     sync_state: "pending",
   }));
   await enqueueSyncAction({
@@ -349,41 +355,31 @@ type DeferredPhotoUploadPayload = {
   photos?: Array<{ uri: string; fileName?: string | null; mimeType?: string | null }>;
 };
 
+type PhotoUploadProgress = {
+  current: number;
+  total: number;
+  message: string;
+};
+
 const processQueueRow = async (session: MobileSession, item: SyncQueueRow) => {
   const payload = JSON.parse(item.payload || "{}") as Record<string, unknown>;
 
   if (item.action_type === "create_tree") {
     const body = payload as unknown as CreateTreeQueuePayload;
+    const uploadedPhotoUrls = body.photos?.length
+      ? await uploadStoredPhotos({
+          photos: body.photos,
+          folder: "trees",
+        })
+      : [];
     const created = await createGreenTree({
       ...body,
       createdBy: body.createdBy,
+      createdByUserId: body.createdByUserId ?? null,
+      createdByOrganizationId: body.createdByOrganizationId ?? null,
+      photoUrl: uploadedPhotoUrls[uploadedPhotoUrls.length - 1] || null,
+      photoUrls: uploadedPhotoUrls,
     });
-    if (body.photos?.length) {
-      try {
-        if (created.review_task_id) {
-          await uploadStoredPhotos({
-            photos: body.photos,
-            folder: "tasks",
-            taskId: Number(created.review_task_id),
-          });
-        } else if (created.id) {
-          await uploadStoredPhotos({
-            photos: body.photos,
-            folder: "trees",
-            treeId: Number(created.id),
-          });
-        }
-      } catch (error) {
-        if (!isLikelyOfflineError(error)) throw error;
-        await enqueueDeferredPhotoUpload({
-          projectId: body.projectId,
-          folder: created.review_task_id ? "tasks" : "trees",
-          taskId: created.review_task_id ? Number(created.review_task_id) : null,
-          treeId: created.review_task_id ? null : Number(created.id || 0),
-          photos: body.photos,
-        });
-      }
-    }
     await replaceCachedTree(APP_MODE, body.projectId, body.localTreeId, {
       id: ensureFinite(created.id),
       project_id: body.projectId,
@@ -399,8 +395,11 @@ const processQueueRow = async (session: MobileSession, item: SyncQueueRow) => {
       tree_age_months: body.treeAgeMonths ?? null,
       inventory_tree_count: body.inventoryTreeCount ?? 1,
       existing_area_geojson: body.existingAreaGeojson ?? null,
+      record_profile_data: body.recordProfileData ?? null,
       lng: body.lng,
       lat: body.lat,
+      photo_url: uploadedPhotoUrls[uploadedPhotoUrls.length - 1] || null,
+      photo_urls: uploadedPhotoUrls,
       sync_state: "live",
     });
     await refreshGreenCachesSafely(session, body.projectId);
@@ -634,43 +633,40 @@ export const runTaskMutation = async (
   await refreshGreenCachesSafely(session, input.projectId);
 };
 
-export const runTreeCreation = async (session: MobileSession, input: GreenTreeCreateInput) => {
+export const runTreeCreation = async (
+  session: MobileSession,
+  input: GreenTreeCreateInput,
+  options?: { onProgress?: (progress: PhotoUploadProgress | { current: number; total: number; message: string }) => void },
+) => {
+  const storedPhotos = await persistDraftPhotos(input.photos || []);
+  const uploadedPhotoUrls = storedPhotos.length
+    ? await uploadStoredPhotos({
+        photos: storedPhotos,
+        folder: "trees",
+        onProgress: options?.onProgress,
+      })
+    : [];
+  options?.onProgress?.({
+    current: uploadedPhotoUrls.length || 1,
+    total: uploadedPhotoUrls.length || 1,
+    message: storedPhotos.length
+      ? input.treeOrigin === "existing_inventory"
+        ? "Photos uploaded. Saving record..."
+        : "Photos uploaded. Saving tree..."
+      : input.treeOrigin === "existing_inventory"
+        ? "Saving record..."
+        : "Saving tree...",
+  });
   const created = await createGreenTree({
     ...input,
     createdBy: session.user.full_name,
+    createdByUserId: Number(session.user.id || 0) || null,
+    createdByOrganizationId: session.user.organization_id ?? null,
+    photoUrl: uploadedPhotoUrls[uploadedPhotoUrls.length - 1] || null,
+    photoUrls: uploadedPhotoUrls,
   });
-  const storedPhotos = await persistDraftPhotos(input.photos || []);
-  let photoLinked = true;
-  if (storedPhotos.length) {
-    try {
-      if (created.review_task_id) {
-        await uploadStoredPhotos({
-          photos: storedPhotos,
-          folder: "tasks",
-          taskId: Number(created.review_task_id),
-        });
-      } else if (created.id) {
-        await uploadStoredPhotos({
-          photos: storedPhotos,
-          folder: "trees",
-          treeId: Number(created.id),
-        });
-      }
-    } catch (error) {
-      photoLinked = false;
-      if (isLikelyOfflineError(error)) {
-        await enqueueDeferredPhotoUpload({
-          projectId: input.projectId,
-          folder: created.review_task_id ? "tasks" : "trees",
-          taskId: created.review_task_id ? Number(created.review_task_id) : null,
-          treeId: created.review_task_id ? null : Number(created.id || 0),
-          photos: storedPhotos,
-        });
-      }
-    }
-  }
   await refreshGreenCachesSafely(session, input.projectId);
-  return { created, photoLinked };
+  return { created, photoLinked: true };
 };
 
 export const runTreeUpdate = async (session: MobileSession, input: GreenTreeUpdateInput) => {

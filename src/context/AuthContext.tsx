@@ -1,5 +1,6 @@
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import { AppState, type AppStateStatus } from "react-native";
+import { api } from "../api/client";
 import { bootstrapLocalDatabase } from "../storage/database";
 import { clearSession, loadSession, saveSession } from "../storage/session";
 import { hasStoredConsent, hasSeenIntro, markIntroSeen, saveStoredConsent } from "../storage/privacy";
@@ -7,8 +8,9 @@ import { loginMobile, loginSponsorMobile, signUpSponsorMobile } from "../api/aut
 import { fetchPrivacyPolicy, recordMobileConsent } from "../api/privacy";
 import { ensureGreenBackgroundTasksRegistered, unregisterGreenBackgroundTasks } from "../background/greenBackgroundTasks";
 import { clearGreenPushRegistration, syncGreenPushRegistration } from "../notifications/greenPushRegistration";
+import { clearSponsorEngagementNotifications, scheduleSponsorEngagementNotifications } from "../notifications/sponsorEngagementNotifications";
 import { clearSponsorPushRegistration, syncSponsorPushRegistration } from "../notifications/sponsorPushRegistration";
-import type { MobileSession, PrivacyPolicyMeta } from "../types/domain";
+import type { AuthUser, MobileSession, PrivacyPolicyMeta } from "../types/domain";
 
 type PendingConsent = {
   policy: PrivacyPolicyMeta;
@@ -29,11 +31,13 @@ type AuthContextValue = {
     email: string;
     phone?: string | null;
     password: string;
+    referred_by_code?: string | null;
   }) => Promise<void>;
   signOut: () => Promise<void>;
   acceptConsent: () => Promise<void>;
   declineConsent: () => Promise<void>;
   dismissIntro: () => Promise<void>;
+  updateSessionUser: (patch: Partial<AuthUser>) => Promise<void>;
 };
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -65,6 +69,19 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const [session, setSession] = useState<MobileSession | null>(null);
   const [pendingConsent, setPendingConsent] = useState<PendingConsent | null>(null);
   const [needsIntro, setNeedsIntro] = useState(false);
+
+  const updateSessionUser = async (patch: Partial<AuthUser>) => {
+    if (!session) return;
+    const next = {
+      ...session,
+      user: {
+        ...session.user,
+        ...patch,
+      },
+    };
+    setSession(next);
+    await saveSession(next);
+  };
 
   useEffect(() => {
     let active = true;
@@ -109,6 +126,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     if (!session) return;
     if (isSponsorSession(session)) {
       void syncSponsorPushRegistration(session).catch(() => {});
+      void scheduleSponsorEngagementNotifications(session, { force: true }).catch(() => {});
       return;
     }
     void syncGreenPushRegistration(session).catch(() => {});
@@ -121,6 +139,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       if (state !== "active") return;
       if (isSponsorSession(session)) {
         void syncSponsorPushRegistration(session).catch(() => {});
+        void scheduleSponsorEngagementNotifications(session).catch(() => {});
       } else {
         void syncGreenPushRegistration(session).catch(() => {});
       }
@@ -175,11 +194,28 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         if (!introSeen) setNeedsIntro(true);
       },
       signOut: async () => {
+        const accessToken = String(session?.access_token || "").trim();
+        if (accessToken) {
+          try {
+            await api.post(
+              "/green/auth/logout",
+              {},
+              {
+                headers: {
+                  Authorization: `Bearer ${accessToken}`,
+                },
+              },
+            );
+          } catch {
+            // Best-effort revoke only; local sign-out must still complete.
+          }
+        }
         if (!isSponsorSession(session)) {
           await clearGreenPushRegistration(session);
           await unregisterGreenBackgroundTasks();
         } else {
           await clearSponsorPushRegistration(session);
+          await clearSponsorEngagementNotifications();
         }
         setPendingConsent(null);
         setSession(null);
@@ -202,6 +238,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         await markIntroSeen();
         setNeedsIntro(false);
       },
+      updateSessionUser,
     }),
     [booting, needsIntro, pendingConsent, session],
   );

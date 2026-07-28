@@ -3,7 +3,6 @@ import { useMemo } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import { EmptyState } from "../../components/EmptyState";
 import { MetricTile } from "../../components/MetricTile";
-import { ProjectChip } from "../../components/ProjectChip";
 import { ScreenHero } from "../../components/ScreenHero";
 import { ScreenSurface } from "../../components/ScreenSurface";
 import { SectionCard } from "../../components/SectionCard";
@@ -16,18 +15,21 @@ import {
   normalizeName,
   normalizeTaskState,
 } from "../../green/workflow";
+import { getWorkflowLabels } from "../../green/projectProfile";
+import { filterVisibleTreeRecords } from "../../green/treeRecords";
 import { colors, radii, spacing } from "../../theme/tokens";
 
 export const GreenTreeRecordsScreen = () => {
   const navigation = useNavigation<any>();
   const { session } = useAuth();
-  const { projects, trees, selectedProjectId, selectedProject, matchedCustodian, isCustodianUser, refreshing, selectProject, refreshAll } = useGreenSync();
+  const { trees, selectedProject, matchedCustodian, isCustodianUser, refreshing, refreshAll } = useGreenSync();
+  const workflowLabels = useMemo(() => getWorkflowLabels(selectedProject || null), [selectedProject]);
 
   const currentUserName = normalizeName(session?.user.full_name);
 
   const visibleTrees = useMemo(() => {
     const custodianId = Number(matchedCustodian?.id || 0);
-    return trees.filter((tree) => {
+    return filterVisibleTreeRecords(trees).filter((tree) => {
       if (isCustodianUser && custodianId > 0) {
         return Number(tree.custodian_id || 0) === custodianId;
       }
@@ -60,7 +62,7 @@ export const GreenTreeRecordsScreen = () => {
   return (
     <ScreenSurface refreshing={refreshing} onRefresh={() => void refreshAll()} contentContainerStyle={styles.content}>
       <ScreenHero
-        title="Tree Records"
+        title={workflowLabels.recordsTitle}
         rightSlot={
           <Pressable onPress={() => navigation.goBack()} style={styles.topButton}>
             <Text style={styles.topButtonText}>Back Home</Text>
@@ -69,34 +71,36 @@ export const GreenTreeRecordsScreen = () => {
       />
 
       <SectionCard title="Project" subtitle={undefined}>
-        <View style={styles.projectChipRow}>
-          {projects.map((project) => (
-            <ProjectChip key={project.id} label={project.name} active={selectedProjectId === project.id} onPress={() => void selectProject(project.id)} />
-          ))}
-        </View>
-        {selectedProject ? <Text style={styles.scopeText}>{selectedProject.name} | {selectedProject.location_text || "Project selected"}</Text> : null}
+        {selectedProject ? (
+          <View style={styles.projectScopeCard}>
+            <Text style={styles.projectScopeTitle}>{selectedProject.name}</Text>
+            <Text style={styles.scopeText}>{selectedProject.location_text || "Project selected on the home screen"}</Text>
+          </View>
+        ) : (
+          <Text style={styles.scopeText}>No project selected on the home screen yet.</Text>
+        )}
       </SectionCard>
 
-      <SectionCard title="Tree Records" subtitle={undefined}>
+      <SectionCard title={workflowLabels.recordsTitle} subtitle={undefined}>
         <View style={styles.metricRow}>
-          <MetricTile label="My Trees" value={visibleTrees.length} helper="Current user scope" />
-          <MetricTile label="Healthy" value={recordStats.healthy} tone="success" helper="Healthy + alive" />
+          <MetricTile label={`My ${workflowLabels.entityPlural}`} value={visibleTrees.length} helper="Current user scope" />
+          <MetricTile label={workflowLabels.healthyLabel} value={recordStats.healthy} tone="success" helper={workflowLabels.healthyHelper} />
         </View>
         <View style={styles.metricRow}>
-          <MetricTile label="Dead" value={recordStats.dead} tone={recordStats.dead > 0 ? "warning" : "default"} helper="Dead + removed" />
-          <MetricTile label="Needs Attention" value={recordStats.needsAttention} tone={recordStats.needsAttention > 0 ? "warning" : "default"} helper="Pest, disease, damaged" />
+          <MetricTile label={workflowLabels.deadLabel} value={recordStats.dead} tone={recordStats.dead > 0 ? "warning" : "default"} helper={workflowLabels.deadHelper} />
+          <MetricTile label={workflowLabels.attentionLabel} value={recordStats.needsAttention} tone={recordStats.needsAttention > 0 ? "warning" : "default"} helper={workflowLabels.attentionHelper} />
         </View>
 
         {!visibleTrees.length ? (
-          <EmptyState title="No tree records yet" subtitle="Save a planting or existing-tree record first and it will appear here." />
+          <EmptyState title={workflowLabels.noRecordsTitle} subtitle={workflowLabels.noRecordsSubtitle} />
         ) : (
           <View style={styles.speciesCard}>
-            <Text style={styles.speciesTitle}>Species Distribution</Text>
+            <Text style={styles.speciesTitle}>{workflowLabels.cropDistributionTitle}</Text>
             {speciesSummary.map(([species, count]) => (
               <View key={species} style={styles.speciesRow}>
                 <View style={styles.speciesText}>
                   <Text style={styles.speciesName}>{species}</Text>
-                  <Text style={styles.speciesCount}>{count} tree{count === 1 ? "" : "s"}</Text>
+                  <Text style={styles.speciesCount}>{count} {count === 1 ? workflowLabels.entitySingular.toLowerCase() : workflowLabels.entityPlural.toLowerCase()}</Text>
                 </View>
                 <View style={styles.speciesTrack}>
                   <View style={[styles.speciesFill, { width: `${Math.max(10, Math.round((count / maxSpeciesCount) * 100))}%` }]} />
@@ -127,10 +131,18 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: "800",
   },
-  projectChipRow: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: spacing.sm,
+  projectScopeCard: {
+    borderRadius: radii.lg,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.panelSoft,
+    padding: spacing.md,
+    gap: spacing.xs,
+  },
+  projectScopeTitle: {
+    color: colors.text,
+    fontSize: 16,
+    fontWeight: "900",
   },
   scopeText: {
     color: colors.textSoft,

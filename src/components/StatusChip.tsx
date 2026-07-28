@@ -1,9 +1,11 @@
+import { Ionicons } from "@expo/vector-icons";
 import { StyleSheet, Text, View } from "react-native";
 import { colors, radii, spacing } from "../theme/tokens";
 
 type StatusChipProps = {
   label: string;
   tone?: "online" | "offline" | "warning" | "neutral";
+  checkmark?: boolean;
 };
 
 const toneStyles = {
@@ -13,11 +15,15 @@ const toneStyles = {
   neutral: { backgroundColor: colors.panelSoft, color: colors.textSoft, borderColor: colors.border },
 } as const;
 
-export const StatusChip = ({ label, tone = "neutral" }: StatusChipProps) => {
+export const StatusChip = ({ label, tone = "neutral", checkmark = false }: StatusChipProps) => {
   const toneStyle = toneStyles[tone];
   return (
     <View style={[styles.wrap, { backgroundColor: toneStyle.backgroundColor, borderColor: toneStyle.borderColor }]}>
-      <View style={[styles.dot, { backgroundColor: toneStyle.color }]} />
+      {checkmark ? (
+        <Ionicons name="checkmark-circle" size={13} color={toneStyle.color} />
+      ) : (
+        <View style={[styles.dot, { backgroundColor: toneStyle.color }]} />
+      )}
       <Text style={[styles.label, { color: toneStyle.color }]}>{label}</Text>
     </View>
   );

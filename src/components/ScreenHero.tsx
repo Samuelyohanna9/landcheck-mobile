@@ -1,5 +1,7 @@
 import type { ReactNode } from "react";
 import { StyleSheet, Text, View } from "react-native";
+import { useAuth } from "../context/AuthContext";
+import { FieldIdentityAvatar } from "./FieldIdentityAvatar";
 import { BrandMark } from "./BrandMark";
 import { colors, radii, spacing } from "../theme/tokens";
 
@@ -12,6 +14,8 @@ type ScreenHeroProps = {
 };
 
 export const ScreenHero = ({ title, subtitle, logoUrl, badge, rightSlot }: ScreenHeroProps) => {
+  const { session } = useAuth();
+  const showFieldAvatar = Boolean(session && session.auth_mode !== "sponsor_user");
   return (
     <View style={styles.wrap}>
       <View style={styles.left}>
@@ -28,7 +32,20 @@ export const ScreenHero = ({ title, subtitle, logoUrl, badge, rightSlot }: Scree
           ) : null}
         </View>
       </View>
-      {rightSlot ? <View style={styles.right}>{rightSlot}</View> : null}
+      {rightSlot || showFieldAvatar ? (
+        <View style={styles.right}>
+          {rightSlot ? <View style={styles.rightSlotWrap}>{rightSlot}</View> : null}
+          {showFieldAvatar ? (
+            <FieldIdentityAvatar
+              userId={session?.user.id}
+              displayName={session?.user.full_name}
+              photoUri={session?.user.profile_photo_url}
+              size={46}
+              borderColor="rgba(18, 92, 45, 0.12)"
+            />
+          ) : null}
+        </View>
+      ) : null}
     </View>
   );
 };
@@ -77,7 +94,12 @@ const styles = StyleSheet.create({
     lineHeight: 13,
   },
   right: {
-    justifyContent: "flex-start",
-    alignItems: "flex-end",
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "flex-end",
+    gap: spacing.sm,
+  },
+  rightSlotWrap: {
+    flexShrink: 1,
   },
 });

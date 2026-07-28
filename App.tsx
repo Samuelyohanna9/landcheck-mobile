@@ -1,6 +1,6 @@
 import { useEffect } from "react";
-import { StatusBar } from "expo-status-bar";
 import { SafeAreaProvider } from "react-native-safe-area-context";
+import { SystemBars } from "react-native-edge-to-edge";
 import { AuthProvider } from "./src/context/AuthContext";
 import { GreenSyncProvider } from "./src/context/GreenSyncContext";
 import { AppNavigator } from "./src/navigation/AppNavigator";
@@ -13,9 +13,9 @@ export default function App() {
 
   return (
     <SafeAreaProvider>
+      <SystemBars style="auto" />
       <AuthProvider>
         <GreenSyncProvider>
-          <StatusBar style="dark" />
           <AppNavigator />
         </GreenSyncProvider>
       </AuthProvider>

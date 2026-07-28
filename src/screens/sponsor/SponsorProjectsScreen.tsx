@@ -6,7 +6,7 @@ import * as ImagePicker from "expo-image-picker";
 import { useCallback, useMemo, useState } from "react";
 import { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { useFocusEffect, useNavigation } from "@react-navigation/native";
-import { ActivityIndicator, Alert, Dimensions, Image, Modal, Pressable, Share, StyleSheet, Text, TextInput, TouchableOpacity, View } from "react-native";
+import { ActivityIndicator, Alert, Dimensions, Modal, Pressable, Share, StyleSheet, Text, TextInput, TouchableOpacity, View } from "react-native";
 import { BrandMark } from "../../components/BrandMark";
 import { EmptyState } from "../../components/EmptyState";
 import { ScreenSurface } from "../../components/ScreenSurface";
@@ -84,6 +84,23 @@ const isPendingPaymentOrder = (order?: SponsorOrderSummary | null) => {
     ["pending_payment", "payment_review", "proof_submitted"].includes(orderStatus) ||
     ["pending_payment", "payment_review", "proof_submitted"].includes(paymentStatus)
   );
+};
+
+const formatSponsorProjectPriceChoices = (project?: ProjectSummary | null) => {
+  const entries: Array<string> = [];
+  const push = (currency: string | null | undefined, amount: number | null | undefined) => {
+    const code = String(currency || "").trim().toUpperCase();
+    const numeric = Number(amount || 0);
+    if (code.length !== 3 || !Number.isFinite(numeric) || numeric <= 0) return;
+    const label = `${formatCurrencyAmount(numeric, code)}/tree`;
+    if (!entries.includes(label)) entries.push(label);
+  };
+  push("NGN", project?.sponsor_price_per_tree_ngn);
+  push("USD", project?.sponsor_price_per_tree_usd);
+  if (entries.length === 0) {
+    push(project?.sponsor_currency || "NGN", project?.sponsor_price_per_tree);
+  }
+  return entries.length > 0 ? entries.join(" · ") : "TBD";
 };
 
 const sponsorHeroBackground = require("../../../assets/background-sponsor.png");
@@ -578,7 +595,7 @@ export const SponsorProjectsScreen = () => {
     <ScreenSurface refreshing={refreshing} onRefresh={() => void loadData()} contentContainerStyle={styles.scrollContent}>
       {/* 1. Header background and greeting */}
       <View style={styles.headerContainer}>
-        <Image source={sponsorHeroBackground} resizeMode="cover" style={styles.headerBgImage as any} />
+        <ExpoImage source={sponsorHeroBackground} contentFit="cover" style={styles.headerBgImage} />
         
         {/* Soft gradient fade overlay to make text 100% readable on the left, while showing the plant on the right */}
         <LinearGradient
@@ -1387,7 +1404,7 @@ export const SponsorProjectsScreen = () => {
         ) : (
           <View style={styles.list}>
             {projects.map((project) => {
-              const priceLabel = formatCurrencyAmount(project.sponsor_price_per_tree, project.sponsor_currency);
+              const priceLabel = formatSponsorProjectPriceChoices(project);
               const availability = getSponsorProjectAvailability(project);
               const userProjectTrees = orders
                 .filter((o) => o.project_id === project.id && ["paid", "allocated", "completed"].includes(String(o.order_status || o.payment_status || "").trim().toLowerCase()))
@@ -1469,7 +1486,7 @@ export const SponsorProjectsScreen = () => {
                     <View style={styles.projectBadgesRow}>
                       <View style={styles.projectBadge}>
                         <Ionicons name="cash-outline" size={10} color="#1e8a42" />
-                        <Text style={styles.projectBadgeText}>{project.sponsor_price_per_tree ? `${priceLabel}/tree` : "TBD"}</Text>
+                        <Text style={styles.projectBadgeText}>{priceLabel}</Text>
                       </View>
                       <View style={styles.projectBadge}>
                         <Ionicons name="ribbon-outline" size={10} color="#1e8a42" />

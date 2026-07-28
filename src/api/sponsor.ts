@@ -49,6 +49,35 @@ const normalizeProject = (project: any): ProjectSummary => ({
     project?.sponsor_price_per_tree === null || project?.sponsor_price_per_tree === undefined
       ? null
       : Number(project.sponsor_price_per_tree || 0),
+  sponsor_price_per_tree_ngn:
+    project?.sponsor_price_per_tree_ngn === null || project?.sponsor_price_per_tree_ngn === undefined
+      ? null
+      : Number(project.sponsor_price_per_tree_ngn || 0),
+  sponsor_price_per_tree_usd:
+    project?.sponsor_price_per_tree_usd === null || project?.sponsor_price_per_tree_usd === undefined
+      ? null
+      : Number(project.sponsor_price_per_tree_usd || 0),
+  available_sponsor_currencies: Array.isArray(project?.available_sponsor_currencies)
+    ? project.available_sponsor_currencies
+        .map((item: unknown) => String(item || "").trim().toUpperCase())
+        .filter((item: string, index: number, arr: string[]) => item.length === 3 && arr.indexOf(item) === index)
+    : [
+        project?.sponsor_price_per_tree_ngn ? "NGN" : null,
+        project?.sponsor_price_per_tree_usd ? "USD" : null,
+        !project?.sponsor_price_per_tree_ngn && !project?.sponsor_price_per_tree_usd && project?.sponsor_price_per_tree
+          ? String(project?.sponsor_currency || "NGN").trim().toUpperCase()
+          : null,
+      ].filter((item: string | null): item is string => Boolean(item)),
+  sponsor_price_options:
+    project?.sponsor_price_options && typeof project.sponsor_price_options === "object"
+      ? Object.fromEntries(
+          Object.entries(project.sponsor_price_options).flatMap(([currency, amount]) => {
+            const code = String(currency || "").trim().toUpperCase();
+            const numeric = Number(amount || 0);
+            return code.length === 3 && Number.isFinite(numeric) && numeric > 0 ? [[code, numeric]] : [];
+          }),
+        )
+      : {},
   sponsor_capacity:
     project?.sponsor_capacity === null || project?.sponsor_capacity === undefined
       ? null
@@ -127,6 +156,7 @@ export const createSponsorOrder = async (
   payload: {
     project_id: number;
     quantity: number;
+    checkout_currency?: string | null;
     dedication_type?: string | null;
     dedication_name?: string | null;
     dedication_message?: string | null;
@@ -200,7 +230,7 @@ export const fetchSponsorTreeDetail = async (session: MobileSession, unitId: num
 };
 
 export const buildSponsorCertificateUrl = (session: MobileSession, unitId: number) =>
-  `${API_URL}/green/sponsor/trees/${unitId}/certificate/pdf?sponsor_id=${session.user.id}`;
+  `${API_URL}/green/sponsor/trees/${unitId}/certificate/pdf?sponsor_id=${session.user.id}&access_token=${encodeURIComponent(session.access_token)}`;
 
 export const buildSponsorPublicTreeStoryUrl = (unitUid?: string | null) => {
   const normalized = encodeURIComponent(String(unitUid || "").trim());
@@ -242,4 +272,241 @@ export const deactivateGreenSponsorMobilePushToken = async (session: MobileSessi
     token,
   });
   return response.data;
+};
+
+export type SponsorProfileSettingsPayload = {
+  entity_category?: string;
+  leaderboard_visibility?: string;
+};
+
+export type SponsorAchievements = {
+  total_trees: number;
+  level: string;
+  badge_code: string;
+  badge_emoji: string;
+  next_level: string | null;
+  next_level_threshold: number | null;
+  progress_percentage: number;
+};
+
+export type LeaderboardEntry = {
+  sponsor_id: number;
+  display_name: string;
+  entity_category: string;
+  monthly_trees: number;
+  all_time_trees: number;
+  achievement_level: string;
+  rank: number;
+};
+
+export type SponsorLeaderboardData = {
+  top_overall: LeaderboardEntry[];
+  top_schools: LeaderboardEntry[];
+  top_communities: LeaderboardEntry[];
+  top_companies: LeaderboardEntry[];
+};
+
+export const updateSponsorProfileSettings = async (
+  session: MobileSession,
+  payload: SponsorProfileSettingsPayload,
+) => {
+  const response = await api.patch("/green/sponsor/profile/settings", payload, {
+    params: { sponsor_id: session.user.id },
+  });
+  return response.data;
+};
+
+export const fetchSponsorAchievements = async (
+  session: MobileSession,
+): Promise<SponsorAchievements> => {
+  const response = await api.get("/green/sponsor/profile/achievements", {
+    params: { sponsor_id: session.user.id },
+  });
+  return response.data;
+};
+
+export const fetchPublicLeaderboard = async (): Promise<SponsorLeaderboardData> => {
+  const response = await api.get("/green/sponsor/public/leaderboard");
+  return response.data;
+};
+
+
+export type SponsorPointsInfo = {
+  id: number;
+  green_points: number;
+  lifetime_points: number;
+  sponsor_tree_points_earned: number;
+  merch_points_spent: number;
+  merch_eligible_points: number;
+  referral_code: string;
+  referred_by_id: number | null;
+  point_booster_multiplier: number;
+  point_booster_remaining_uses: number;
+  profile_photo_url: string | null;
+  unlocked_species: string[];
+  unlocked_avatars: string[];
+  unlocked_map_icons: string[];
+  current_avatar_border: string | null;
+  current_map_icon: string | null;
+  referral_rules_met: boolean;
+  personal_sponsor_met: boolean;
+  conversion_rate_met: boolean;
+  personal_trees_sponsored: number;
+  total_referred_users: number;
+  converted_referred_users: number;
+};
+
+export type SponsorSocialFollowClaim = {
+  id: number;
+  sponsor_id: number;
+  facebook_screenshot_url: string | null;
+  instagram_screenshot_url: string | null;
+  facebook_opened: boolean;
+  instagram_opened: boolean;
+  status: string;
+  supervisor_note: string | null;
+  points_awarded: boolean;
+  created_at: string | null;
+  updated_at: string | null;
+  submitted_at: string | null;
+  reviewed_at: string | null;
+};
+
+const normalizeSponsorSocialFollowClaim = (row: any): SponsorSocialFollowClaim => ({
+  id: Number(row?.id || 0),
+  sponsor_id: Number(row?.sponsor_id || 0),
+  facebook_screenshot_url: normalizePhotoUrl(row?.facebook_screenshot_url),
+  instagram_screenshot_url: normalizePhotoUrl(row?.instagram_screenshot_url),
+  facebook_opened: Boolean(row?.facebook_opened),
+  instagram_opened: Boolean(row?.instagram_opened),
+  status: row?.status ? String(row.status) : "pending",
+  supervisor_note: row?.supervisor_note ? String(row.supervisor_note) : null,
+  points_awarded: Boolean(row?.points_awarded),
+  created_at: row?.created_at ? String(row.created_at) : null,
+  updated_at: row?.updated_at ? String(row.updated_at) : null,
+  submitted_at: row?.submitted_at ? String(row.submitted_at) : null,
+  reviewed_at: row?.reviewed_at ? String(row.reviewed_at) : null,
+});
+
+export const fetchSponsorPoints = async (session: MobileSession): Promise<SponsorPointsInfo> => {
+  const response = await api.get("/green/sponsor/points", {
+    params: { sponsor_id: session.user.id },
+  });
+  return response.data;
+};
+
+export const redeemSponsorReward = async (
+  session: MobileSession,
+  rewardType: string,
+  shippingDetails?: any
+) => {
+  const response = await api.post("/green/sponsor/redeem", {
+    sponsor_id: session.user.id,
+    reward_type: rewardType,
+    shipping_details: shippingDetails || null,
+  });
+  return response.data;
+};
+
+export const nominateSchool = async (
+  session: MobileSession,
+  payload: { school_name: string; school_address: string; contact_person?: string; contact_phone?: string; reason: string }
+) => {
+  const response = await api.post("/green/sponsor/nominate-school", {
+    sponsor_id: session.user.id,
+    ...payload,
+  });
+  return response.data;
+};
+
+export const createCommunityProject = async (
+  session: MobileSession,
+  payload: { project_name: string; proposed_location: string; description?: string; points: number }
+) => {
+  const response = await api.post("/green/sponsor/community-project", {
+    sponsor_id: session.user.id,
+    ...payload,
+  });
+  return response.data;
+};
+
+export const applyReferralCode = async (session: MobileSession, referralCode: string) => {
+  const response = await api.post("/green/sponsor/apply-referral", {
+    sponsor_id: session.user.id,
+    referral_code: referralCode,
+  });
+  return response.data;
+};
+
+export const updateSponsorAppearance = async (
+  session: MobileSession,
+  payload: { avatar_border?: string | null; map_icon?: string | null }
+) => {
+  const response = await api.post("/green/sponsor/update-appearance", {
+    sponsor_id: session.user.id,
+    ...payload,
+  });
+  return response.data;
+};
+
+export const updateSponsorProfilePhoto = async (session: MobileSession, photoUrl: string) => {
+  const response = await api.post("/green/sponsor/update-profile-photo", {
+    sponsor_id: session.user.id,
+    profile_photo_url: photoUrl,
+  });
+  return response.data;
+};
+
+export const sponsorGameAction = async (
+  session: MobileSession,
+  payload: { game_id: string; action: string; gp_delta: number }
+): Promise<{ ok: boolean; gp_delta: number; new_balance: number }> => {
+  const response = await api.post("/green/sponsor/game/action", {
+    sponsor_id: session.user.id,
+    ...payload,
+  });
+  return response.data;
+};
+
+export const shareEarnPoints = async (session: MobileSession) => {
+  const response = await api.post("/green/sponsor/points/share-earn", {
+    sponsor_id: session.user.id,
+  });
+  return response.data;
+};
+
+export const submitSponsorComplaint = async (
+  session: MobileSession,
+  payload: { complaint_type: string; tree_id?: number | null; message: string }
+) => {
+  const response = await api.post("/green/sponsor/complaints", {
+    sponsor_id: session.user.id,
+    ...payload,
+  });
+  return response.data;
+};
+
+export const fetchSponsorSocialFollowClaim = async (
+  session: MobileSession,
+): Promise<SponsorSocialFollowClaim | null> => {
+  const response = await api.get("/green/sponsor/social-follow-claim", {
+    params: { sponsor_id: session.user.id },
+  });
+  return response.data ? normalizeSponsorSocialFollowClaim(response.data) : null;
+};
+
+export const submitSponsorSocialFollowClaim = async (
+  session: MobileSession,
+  payload: {
+    facebook_screenshot_url: string;
+    instagram_screenshot_url: string;
+    facebook_opened: boolean;
+    instagram_opened: boolean;
+  },
+): Promise<SponsorSocialFollowClaim> => {
+  const response = await api.post("/green/sponsor/social-follow-claim", {
+    sponsor_id: session.user.id,
+    ...payload,
+  });
+  return normalizeSponsorSocialFollowClaim(response.data?.claim || response.data || {});
 };

@@ -37,6 +37,12 @@ yarn-error.*
 .env
 .env*.local
 
+# service account / credential files - never commit
+*firebase-adminsdk*.json
+*service-account*.json
+google-services.json
+GoogleService-Info.plist
+
 # typescript
 *.tsbuildinfo
 

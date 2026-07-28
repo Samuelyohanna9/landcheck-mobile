@@ -10,9 +10,9 @@ import { colors, radii, spacing } from "../../theme/tokens";
 const PRIVACY_POLICY_URL = "https://landcheck.online/privacy";
 
 const dataPoints = [
-  "GPS coordinates for each tree planting and maintenance visit",
-  "Photos captured as evidence for tree monitoring tasks",
-  "Maintenance notes, species, and planting date metadata",
+  "GPS coordinates for mapped plots, trees, and field visits",
+  "Photos captured as evidence for field records and assigned tasks",
+  "Field notes, crop or species details, and observation metadata",
   "Device timestamps and network sync audit trail",
   "Organization and project assignment context",
 ];
@@ -66,7 +66,7 @@ export const PrivacyConsentScreen = () => {
 
       <SectionCard title="Recorded with consent">
         <Text style={styles.bodyText}>User: {pendingConsent.session.user.full_name}</Text>
-        <Text style={styles.bodyText}>Mode: LandCheck Green</Text>
+        <Text style={styles.bodyText}>Workspace: LandCheck Mobile</Text>
         <Text style={styles.bodyText}>Organization: {pendingConsent.session.user.organization_name || "System scope"}</Text>
       </SectionCard>
 

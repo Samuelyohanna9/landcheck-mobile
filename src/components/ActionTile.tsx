@@ -115,9 +115,9 @@ const styles = StyleSheet.create({
   },
   tileInner: {
     flex: 1,
-    padding: 12,
+    padding: 14,
     gap: 6,
-    minHeight: 136,
+    minHeight: 122,
   },
   pressed: {
     opacity: 0.92,
@@ -160,8 +160,9 @@ const styles = StyleSheet.create({
   },
   title: {
     color: colors.text,
-    fontSize: 13,
+    fontSize: 14,
     fontWeight: "900",
+    lineHeight: 18,
   },
   subtitle: {
     color: colors.textMuted,
@@ -176,7 +177,7 @@ const styles = StyleSheet.create({
   },
   footerBadge: {
     paddingHorizontal: 7,
-    paddingVertical: 3,
+    paddingVertical: 4,
     borderRadius: radii.pill,
   },
   footerBadgeText: {

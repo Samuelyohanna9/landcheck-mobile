@@ -3,9 +3,10 @@ import { AppState, type AppStateStatus } from "react-native";
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { getErrorMessage } from "../api/client";
 import {
+  deleteGreenTree,
   fetchDistributionAllocations,
   fetchProjectCustodians,
-  fetchProjects,
+  fetchProjectsForFieldUser,
   fetchTasks,
   fetchTrees,
   fetchUsers,
@@ -16,12 +17,14 @@ import {
   cacheCustodians,
   cacheDistributionAllocations,
   cacheProjects,
+  cacheProjectDetail,
   cacheTasks,
   cacheTrees,
   cacheUsers,
   cacheWorkOrders,
   getOfflineStats,
   patchCachedTask,
+  readCachedProjectDetail,
   readCachedCustodians,
   readCachedDistributionAllocations,
   readCachedProjects,
@@ -55,12 +58,41 @@ import {
   runTreeUpdate,
   syncPendingGreenActions,
 } from "../offline/greenSync";
+import { hydrateTreePhotosForOffline } from "../offline/treePhotoCache";
+import { warmGreenProjectOfflineSurfaces } from "../offline/greenWorkspaceCache";
 import { pushGreenNotification, requestGreenNotificationPermission } from "../notifications/greenNotifications";
+import { readStoredGreenSelectedProjectId, writeStoredGreenSelectedProjectId } from "../storage/greenSelection";
+import { isAgricProject } from "../green/projectProfile";
 
 type UserSummary = { id: number; full_name: string; role?: string | null; role_name?: string | null };
 
+type TaskNotificationSnapshot = {
+  id: number;
+  status: string;
+  reviewState: string;
+  dueDate: string;
+  priority: string;
+};
+
+type WorkOrderNotificationSnapshot = {
+  id: number;
+  workType: string;
+  status: string;
+  targetTrees: number;
+  dueDate: string;
+  maintenanceSchedule: string;
+  areaEnabled: boolean;
+  areaLabel: string;
+};
+
 type MutationResult = {
   queued: boolean;
+  message: string;
+};
+
+type TreeCreateProgressState = {
+  current: number;
+  total: number;
   message: string;
 };
 
@@ -88,8 +120,9 @@ type GreenSyncContextValue = {
   selectProject: (projectId: number) => Promise<void>;
   refreshAll: () => Promise<void>;
   syncNow: () => Promise<void>;
-  createTree: (input: GreenTreeCreateInput) => Promise<MutationResult>;
+  createTree: (input: GreenTreeCreateInput, options?: { onProgress?: (progress: TreeCreateProgressState) => void }) => Promise<MutationResult>;
   updateTree: (input: GreenTreeUpdateInput) => Promise<MutationResult>;
+  deleteTree: (input: { projectId: number; treeId: number }) => Promise<MutationResult>;
   saveTaskUpdate: (input: GreenTaskMutationInput) => Promise<MutationResult>;
   submitTask: (input: GreenTaskMutationInput) => Promise<MutationResult>;
   clearError: () => void;
@@ -118,9 +151,49 @@ const emptySyncProgress: GreenSyncProgress = {
 const GreenSyncContext = createContext<GreenSyncContextValue | null>(null);
 
 const normalizeName = (value?: string | null) => String(value || "").trim().toLowerCase();
+const normalizeStateKey = (value?: string | null) => String(value || "").trim().toLowerCase();
+
+const createTaskNotificationSnapshot = (task: TaskSummary): TaskNotificationSnapshot => ({
+  id: Number(task.id || 0),
+  status: normalizeStateKey(task.status),
+  reviewState: normalizeStateKey(task.review_state),
+  dueDate: String(task.due_date || "").trim(),
+  priority: normalizeStateKey(task.priority),
+});
+
+const createTaskSnapshotMap = (rows: TaskSummary[]) =>
+  new Map<number, TaskNotificationSnapshot>(
+    rows
+      .map(createTaskNotificationSnapshot)
+      .filter((row) => row.id > 0)
+      .map((row) => [row.id, row]),
+  );
+
+const createWorkOrderNotificationSnapshot = (row: WorkOrderSummary): WorkOrderNotificationSnapshot => ({
+  id: Number(row.id || 0),
+  workType: normalizeStateKey(row.work_type),
+  status: normalizeStateKey(row.status || "assigned"),
+  targetTrees: Math.max(0, Number(row.target_trees || 0)),
+  dueDate: String(row.due_date || "").trim(),
+  maintenanceSchedule: String(row.maintenance_schedule || "").trim(),
+  areaEnabled: Boolean(row.area_enabled),
+  areaLabel: String(row.area_label || "").trim(),
+});
+
+const createWorkOrderSnapshotMap = (rows: WorkOrderSummary[]) =>
+  new Map<number, WorkOrderNotificationSnapshot>(
+    rows
+      .map(createWorkOrderNotificationSnapshot)
+      .filter((row) => row.id > 0)
+      .map((row) => [row.id, row]),
+  );
+
+const isReturnedReviewState = (reviewState: string) => reviewState === "rejected" || reviewState === "metadata_edit";
+const isClosedWorkOrderStatus = (status: string) => ["done", "completed", "closed", "cancelled"].includes(status);
 
 export const GreenSyncProvider = ({ children }: { children: ReactNode }) => {
   const { session } = useAuth();
+  const sponsorSession = Boolean(session && (session.auth_mode === "sponsor_user" || session.appMode === "green_sponsor"));
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
   const [tasks, setTasks] = useState<TaskSummary[]>([]);
   const [trees, setTrees] = useState<TreeSummary[]>([]);
@@ -137,11 +210,18 @@ export const GreenSyncProvider = ({ children }: { children: ReactNode }) => {
   const [error, setError] = useState("");
   const [syncNotice, setSyncNotice] = useState("");
   const [syncProgress, setSyncProgress] = useState<GreenSyncProgress>(emptySyncProgress);
-  const seenTaskIdsRef = useRef<Set<number>>(new Set());
-  const seenOrderIdsRef = useRef<Set<number>>(new Set());
+  const projectsRef = useRef<ProjectSummary[]>([]);
+  const taskSnapshotRef = useRef<Map<number, TaskNotificationSnapshot>>(new Map());
+  const orderSnapshotRef = useRef<Map<number, WorkOrderNotificationSnapshot>>(new Map());
+  const suppressedTaskNotificationIdsRef = useRef<Set<number>>(new Set());
   const taskNotifyPrimedRef = useRef(false);
   const orderNotifyPrimedRef = useRef(false);
   const initialAutoSyncRef = useRef(false);
+  const backgroundPrefetchKeyRef = useRef("");
+  const backgroundPrefetchRunningRef = useRef(false);
+  const refreshAllInFlightRef = useRef(false);
+  const liveProjectRefreshInFlightRef = useRef(false);
+  const wasOnlineRef = useRef<boolean | null>(null);
 
   const refreshStats = useCallback(async () => {
     const stats = await getOfflineStats("green");
@@ -151,6 +231,7 @@ export const GreenSyncProvider = ({ children }: { children: ReactNode }) => {
 
   const loadCachedProjectLists = useCallback(async () => {
     const cachedProjects = await readCachedProjects("green");
+    projectsRef.current = cachedProjects;
     setProjects(cachedProjects);
     return cachedProjects;
   }, []);
@@ -174,6 +255,16 @@ export const GreenSyncProvider = ({ children }: { children: ReactNode }) => {
     async (projectId: number) => {
       if (!session) return;
       const actorName = String(session.user.full_name || "").trim();
+      const syncingProject = projectsRef.current.find((project) => Number(project.id) === Number(projectId)) || null;
+      const agricMode = isAgricProject(syncingProject);
+      const [cachedTasks, cachedTrees, cachedCustodians, cachedAllocations, cachedWorkOrders] = await Promise.all([
+        readCachedTasks("green", projectId),
+        readCachedTrees("green", projectId),
+        readCachedCustodians("green", projectId),
+        readCachedDistributionAllocations("green", projectId),
+        readCachedWorkOrders("green", projectId),
+      ]);
+
       const [tasksResult, treesResult, custodiansResult, allocationsResult, workOrdersResult] = await Promise.allSettled([
         fetchTasks(projectId, actorName),
         fetchTrees(projectId, actorName),
@@ -182,57 +273,150 @@ export const GreenSyncProvider = ({ children }: { children: ReactNode }) => {
         fetchWorkOrders(projectId, actorName),
       ]);
 
-      const [nextTasks, nextTrees, nextCustodians, nextAllocations, nextWorkOrders] = await Promise.all([
-        tasksResult.status === "fulfilled" ? Promise.resolve(tasksResult.value) : readCachedTasks("green", projectId),
-        treesResult.status === "fulfilled" ? Promise.resolve(treesResult.value) : readCachedTrees("green", projectId),
-        custodiansResult.status === "fulfilled" ? Promise.resolve(custodiansResult.value) : readCachedCustodians("green", projectId),
-        allocationsResult.status === "fulfilled" ? Promise.resolve(allocationsResult.value) : readCachedDistributionAllocations("green", projectId),
-        workOrdersResult.status === "fulfilled" ? Promise.resolve(workOrdersResult.value) : readCachedWorkOrders("green", projectId),
+      const [nextTasks, nextTreesRaw, nextCustodians, nextAllocations, nextWorkOrders] = await Promise.all([
+        tasksResult.status === "fulfilled" ? Promise.resolve(tasksResult.value) : Promise.resolve(cachedTasks),
+        treesResult.status === "fulfilled" ? Promise.resolve(treesResult.value) : Promise.resolve(cachedTrees),
+        custodiansResult.status === "fulfilled" ? Promise.resolve(custodiansResult.value) : Promise.resolve(cachedCustodians),
+        allocationsResult.status === "fulfilled" ? Promise.resolve(allocationsResult.value) : Promise.resolve(cachedAllocations),
+        workOrdersResult.status === "fulfilled" ? Promise.resolve(workOrdersResult.value) : Promise.resolve(cachedWorkOrders),
       ]);
+      const nextTrees = await hydrateTreePhotosForOffline(nextTreesRaw);
 
       if (tasksResult.status === "fulfilled") {
-        const nextTaskIds = new Set(nextTasks.map((task) => Number(task.id || 0)).filter((id) => id > 0));
-        if (taskNotifyPrimedRef.current) {
-          const newTasks = nextTasks.filter((task) => {
-            const id = Number(task.id || 0);
-            return id > 0 && !seenTaskIdsRef.current.has(id);
+        const previousTaskSnapshots = taskNotifyPrimedRef.current ? taskSnapshotRef.current : createTaskSnapshotMap(cachedTasks);
+        const nextTaskSnapshots = createTaskSnapshotMap(nextTasks);
+        if (taskNotifyPrimedRef.current || previousTaskSnapshots.size > 0) {
+          let newTaskCount = 0;
+          let approvedTaskCount = 0;
+          let returnedTaskCount = 0;
+          let updatedTaskCount = 0;
+
+          nextTaskSnapshots.forEach((nextTask, id) => {
+            const previousTask = previousTaskSnapshots.get(id);
+            if (!previousTask) {
+              newTaskCount += 1;
+              return;
+            }
+            if (suppressedTaskNotificationIdsRef.current.has(id)) {
+              suppressedTaskNotificationIdsRef.current.delete(id);
+              return;
+            }
+            if (previousTask.reviewState !== nextTask.reviewState) {
+              if (nextTask.reviewState === "approved") {
+                approvedTaskCount += 1;
+                return;
+              }
+              if (isReturnedReviewState(nextTask.reviewState)) {
+                returnedTaskCount += 1;
+                return;
+              }
+            }
+            if (
+              previousTask.status !== nextTask.status ||
+              previousTask.dueDate !== nextTask.dueDate ||
+              previousTask.priority !== nextTask.priority
+            ) {
+              updatedTaskCount += 1;
+            }
           });
-          if (newTasks.length > 0) {
+
+          if (newTaskCount > 0) {
             void pushGreenNotification(
-              "New Task",
-              `${newTasks.length} new task${newTasks.length === 1 ? "" : "s"} assigned to you.`,
+              "Task assigned",
+              `${newTaskCount} new task${newTaskCount === 1 ? "" : "s"} assigned to you.`,
+            );
+          }
+          if (approvedTaskCount > 0) {
+            void pushGreenNotification(
+              "Task approved",
+              `${approvedTaskCount} submitted task${approvedTaskCount === 1 ? "" : "s"} approved by your supervisor.`,
+            );
+          }
+          if (returnedTaskCount > 0) {
+            void pushGreenNotification(
+              "Task returned",
+              `${returnedTaskCount} task${returnedTaskCount === 1 ? "" : "s"} returned for changes or metadata update.`,
+            );
+          }
+          if (updatedTaskCount > 0) {
+            void pushGreenNotification(
+              "Task updated",
+              `${updatedTaskCount} assigned task${updatedTaskCount === 1 ? "" : "s"} updated.`,
             );
           }
         }
-        seenTaskIdsRef.current = nextTaskIds;
+        taskSnapshotRef.current = nextTaskSnapshots;
         taskNotifyPrimedRef.current = true;
       }
 
       if (workOrdersResult.status === "fulfilled") {
-        const nextOrderIds = new Set(nextWorkOrders.map((row) => Number(row.id || 0)).filter((id) => id > 0));
-        if (orderNotifyPrimedRef.current) {
-          const newOrders = nextWorkOrders.filter((row) => {
-            const id = Number(row.id || 0);
-            return id > 0 && !seenOrderIdsRef.current.has(id);
+        const previousOrderSnapshots = orderNotifyPrimedRef.current ? orderSnapshotRef.current : createWorkOrderSnapshotMap(cachedWorkOrders);
+        const nextOrderSnapshots = createWorkOrderSnapshotMap(nextWorkOrders);
+        if (orderNotifyPrimedRef.current || previousOrderSnapshots.size > 0) {
+          let newPlantingOrderCount = 0;
+          let newMaintenanceOrderCount = 0;
+          let plantingTargetIncrease = 0;
+          let updatedOrderCount = 0;
+
+          nextOrderSnapshots.forEach((nextOrder, id) => {
+            const previousOrder = previousOrderSnapshots.get(id);
+            if (!previousOrder) {
+              if (nextOrder.workType === "planting") {
+                newPlantingOrderCount += 1;
+              } else {
+                newMaintenanceOrderCount += 1;
+              }
+              return;
+            }
+
+            const targetDelta = nextOrder.targetTrees - previousOrder.targetTrees;
+            if (
+              nextOrder.workType === "planting" &&
+              targetDelta > 0 &&
+              !isClosedWorkOrderStatus(nextOrder.status)
+            ) {
+              plantingTargetIncrease += targetDelta;
+            }
+
+            if (
+              previousOrder.status !== nextOrder.status ||
+              previousOrder.dueDate !== nextOrder.dueDate ||
+              previousOrder.maintenanceSchedule !== nextOrder.maintenanceSchedule ||
+              previousOrder.areaEnabled !== nextOrder.areaEnabled ||
+              previousOrder.areaLabel !== nextOrder.areaLabel
+            ) {
+              updatedOrderCount += 1;
+            }
           });
-          if (newOrders.length > 0) {
-            const newPlantingCount = newOrders.filter((row) => String(row.work_type || "").toLowerCase() === "planting").length;
-            const newMaintenanceOrderCount = Math.max(newOrders.length - newPlantingCount, 0);
-            if (newPlantingCount > 0) {
-              void pushGreenNotification(
-                "New Planting Order",
-                `${newPlantingCount} new planting order${newPlantingCount === 1 ? "" : "s"} assigned to you.`,
-              );
-            }
-            if (newMaintenanceOrderCount > 0) {
-              void pushGreenNotification(
-                "New Work Order",
-                `${newMaintenanceOrderCount} new work order${newMaintenanceOrderCount === 1 ? "" : "s"} assigned to you.`,
-              );
-            }
+
+          if (newPlantingOrderCount > 0) {
+            void pushGreenNotification(
+              "Planting order assigned",
+              `${newPlantingOrderCount} new planting order${newPlantingOrderCount === 1 ? "" : "s"} assigned to you.`,
+            );
+          }
+          if (plantingTargetIncrease > 0) {
+            void pushGreenNotification(
+              "Planting target increased",
+              `Your assigned planting target increased by ${plantingTargetIncrease} tree${plantingTargetIncrease === 1 ? "" : "s"}.`,
+            );
+          }
+          if (newMaintenanceOrderCount > 0) {
+            void pushGreenNotification(
+              agricMode ? "Field visit assigned" : "Maintenance order assigned",
+              agricMode
+                ? `${newMaintenanceOrderCount} new field visit${newMaintenanceOrderCount === 1 ? "" : "s"} assigned to you.`
+                : `${newMaintenanceOrderCount} new maintenance order${newMaintenanceOrderCount === 1 ? "" : "s"} assigned to you.`,
+            );
+          }
+          if (updatedOrderCount > 0) {
+            void pushGreenNotification(
+              "Work order updated",
+              `${updatedOrderCount} assigned work order${updatedOrderCount === 1 ? "" : "s"} updated.`,
+            );
           }
         }
-        seenOrderIdsRef.current = nextOrderIds;
+        orderSnapshotRef.current = nextOrderSnapshots;
         orderNotifyPrimedRef.current = true;
       }
 
@@ -249,6 +433,12 @@ export const GreenSyncProvider = ({ children }: { children: ReactNode }) => {
       setCustodians(nextCustodians);
       setDistributionAllocations(nextAllocations);
       setWorkOrders(nextWorkOrders);
+      void warmGreenProjectOfflineSurfaces(session, projectId, nextTrees, {
+        actorName,
+        includeProjectDetail: true,
+        includeTreeTimelines: true,
+        includeMapPack: true,
+      }).catch(() => {});
 
       if (
         tasksResult.status === "rejected" &&
@@ -263,6 +453,55 @@ export const GreenSyncProvider = ({ children }: { children: ReactNode }) => {
     [session],
   );
 
+  const prefetchProjectsInBackground = useCallback(
+    async (projectItems: ProjectSummary[], currentProjectId?: number | null) => {
+      if (!session || !isOnline || backgroundPrefetchRunningRef.current) return;
+      const projectIds = projectItems
+        .map((item) => Number(item.id))
+        .filter((id) => Number.isFinite(id) && id > 0 && id !== Number(currentProjectId || 0));
+      if (!projectIds.length) return;
+
+      const prefetchKey = projectIds.join(",");
+      if (backgroundPrefetchKeyRef.current === prefetchKey) return;
+
+      backgroundPrefetchRunningRef.current = true;
+      backgroundPrefetchKeyRef.current = prefetchKey;
+      try {
+        const actorName = String(session.user.full_name || "").trim();
+        for (const projectId of projectIds) {
+          if (!isOnline) break;
+          const [tasks, treesRaw, custodians, allocations, workOrders] = await Promise.all([
+            fetchTasks(projectId, actorName),
+            fetchTrees(projectId, actorName),
+            fetchProjectCustodians(projectId),
+            fetchDistributionAllocations(projectId),
+            fetchWorkOrders(projectId, actorName),
+          ]);
+          const trees = await hydrateTreePhotosForOffline(treesRaw);
+          await Promise.all([
+            cacheTasks("green", projectId, tasks),
+            cacheTrees("green", projectId, trees),
+            cacheCustodians("green", projectId, custodians),
+            cacheDistributionAllocations("green", projectId, allocations),
+            cacheWorkOrders("green", projectId, workOrders),
+          ]);
+          await warmGreenProjectOfflineSurfaces(session, projectId, trees, {
+            actorName,
+            includeProjectDetail: true,
+            includeTreeTimelines: true,
+            includeMapPack: true,
+          });
+        }
+      } catch {
+        // Keep the current project usable even if background prefetch fails.
+      } finally {
+        backgroundPrefetchRunningRef.current = false;
+        void refreshStats().catch(() => {});
+      }
+    },
+    [isOnline, refreshStats, session],
+  );
+
   const pickProjectId = useCallback(
     (items: ProjectSummary[], preferred?: number | null) => {
       if (preferred && items.some((item) => item.id === preferred)) return preferred;
@@ -273,66 +512,102 @@ export const GreenSyncProvider = ({ children }: { children: ReactNode }) => {
   );
 
   const refreshAll = useCallback(async () => {
-    if (!session) {
-      setLoading(false);
-      return;
-    }
-    setRefreshing(true);
-    setLoading(true);
-    setError("");
+    // Guards against overlapping reloads: an unstable connection can fire the network-state
+    // listener many times in quick succession, and without this a second refresh could start
+    // before the first resolves, race it, and clobber fresh state with stale results.
+    if (refreshAllInFlightRef.current) return;
+    refreshAllInFlightRef.current = true;
     try {
-      const network = await Network.getNetworkStateAsync();
-      const online = Boolean(network.isConnected && network.isInternetReachable !== false);
-      setIsOnline(online);
-
-      const [cachedProjects, cachedUsers] = await Promise.all([loadCachedProjectLists(), readCachedUsers("green")]);
-      setUsers(cachedUsers as UserSummary[]);
-      const fallbackProjectId = pickProjectId(cachedProjects);
-      if (fallbackProjectId) {
-        setSelectedProjectId(fallbackProjectId);
-        await loadCachedProjectData(fallbackProjectId);
-      }
-
-      if (!online) {
-        setSyncNotice("Offline mode: showing cached projects, trees, tasks, and field setup.");
-        await refreshStats();
-        return;
-      }
-
-      const actorName = String(session.user.full_name || "").trim();
-      const [liveProjects, liveUsers] = await Promise.all([
-        fetchProjects(session.user.organization_id, actorName),
-        fetchUsers(session.user.organization_id),
-      ]);
-      await Promise.all([cacheProjects("green", liveProjects), cacheUsers("green", liveUsers)]);
-      setProjects(liveProjects);
-      setUsers(liveUsers);
-
-      const nextProjectId = pickProjectId(liveProjects, fallbackProjectId);
-      setSelectedProjectId(nextProjectId);
-      if (nextProjectId) {
-        await loadLiveProjectData(nextProjectId);
-      } else {
+      if (sponsorSession) {
+        projectsRef.current = [];
+        setProjects([]);
         setTasks([]);
         setTrees([]);
+        setUsers([]);
         setCustodians([]);
         setDistributionAllocations([]);
         setWorkOrders([]);
+        setSelectedProjectId(null);
+        setOfflineStats(emptyStats);
+        setSyncNotice("");
+        setError("");
+        setLoading(false);
+        setRefreshing(false);
+        return;
       }
-      await refreshStats();
-      setSyncNotice("");
-    } catch (err) {
-      setError(getErrorMessage(err, "Failed to load Green mobile data."));
-      await refreshStats();
+      if (!session) {
+        setLoading(false);
+        return;
+      }
+      setRefreshing(true);
+      setLoading(true);
+      setError("");
+      try {
+        const network = await Network.getNetworkStateAsync();
+        const online = Boolean(network.isConnected && network.isInternetReachable !== false);
+        setIsOnline(online);
+        const storedProjectId = await readStoredGreenSelectedProjectId(session.user.id);
+
+        const [cachedProjects, cachedUsers] = await Promise.all([loadCachedProjectLists(), readCachedUsers("green")]);
+        setUsers(cachedUsers as UserSummary[]);
+        const fallbackProjectId = pickProjectId(cachedProjects, storedProjectId);
+        if (fallbackProjectId) {
+          setSelectedProjectId(fallbackProjectId);
+          await writeStoredGreenSelectedProjectId(session.user.id, fallbackProjectId);
+          await loadCachedProjectData(fallbackProjectId);
+        }
+
+        if (!online) {
+          setSyncNotice("Offline mode: showing cached projects, trees, tasks, and field setup.");
+          await refreshStats();
+          return;
+        }
+
+        const actorName = String(session.user.full_name || "").trim();
+        const [liveProjects, liveUsers] = await Promise.all([
+          fetchProjectsForFieldUser(session.user),
+          fetchUsers(session.user.organization_id),
+        ]);
+        await Promise.all([cacheProjects("green", liveProjects), cacheUsers("green", liveUsers)]);
+        projectsRef.current = liveProjects;
+        setProjects(liveProjects);
+        setUsers(liveUsers);
+
+        const nextProjectId = pickProjectId(liveProjects, storedProjectId ?? fallbackProjectId);
+        setSelectedProjectId(nextProjectId);
+        if (nextProjectId) {
+          await writeStoredGreenSelectedProjectId(session.user.id, nextProjectId);
+          await loadLiveProjectData(nextProjectId);
+          void prefetchProjectsInBackground(liveProjects, nextProjectId);
+        } else {
+          setTasks([]);
+          setTrees([]);
+          setCustodians([]);
+          setDistributionAllocations([]);
+          setWorkOrders([]);
+          void prefetchProjectsInBackground(liveProjects, null);
+        }
+        await refreshStats();
+        setSyncNotice("");
+      } catch (err) {
+        setError(getErrorMessage(err, "Failed to load Green mobile data."));
+        await refreshStats();
+      } finally {
+        setLoading(false);
+        setRefreshing(false);
+      }
     } finally {
-      setLoading(false);
-      setRefreshing(false);
+      refreshAllInFlightRef.current = false;
     }
-  }, [loadCachedProjectData, loadCachedProjectLists, loadLiveProjectData, pickProjectId, refreshStats, session]);
+  }, [loadCachedProjectData, loadCachedProjectLists, loadLiveProjectData, pickProjectId, prefetchProjectsInBackground, refreshStats, session, sponsorSession]);
 
   const selectProject = useCallback(
     async (projectId: number) => {
+      if (sponsorSession) return;
       setSelectedProjectId(projectId);
+      if (session) {
+        await writeStoredGreenSelectedProjectId(session.user.id, projectId);
+      }
       await loadCachedProjectData(projectId);
       if (!session || !isOnline) return;
       try {
@@ -342,11 +617,11 @@ export const GreenSyncProvider = ({ children }: { children: ReactNode }) => {
         // Keep cached state when live refresh fails.
       }
     },
-    [isOnline, loadCachedProjectData, loadLiveProjectData, refreshStats, session],
+    [isOnline, loadCachedProjectData, loadLiveProjectData, refreshStats, session, sponsorSession],
   );
 
   const syncNow = useCallback(async () => {
-    if (!session || !isOnline || syncing) return;
+    if (sponsorSession || !session || !isOnline || syncing) return;
     setSyncing(true);
     setError("");
     setSyncProgress(emptySyncProgress);
@@ -371,6 +646,7 @@ export const GreenSyncProvider = ({ children }: { children: ReactNode }) => {
       if (selectedProjectId) {
         try {
           await loadLiveProjectData(selectedProjectId);
+          void prefetchProjectsInBackground(refreshedProjects, selectedProjectId);
         } catch {
           // Keep cached state if live refresh fails.
         }
@@ -379,6 +655,7 @@ export const GreenSyncProvider = ({ children }: { children: ReactNode }) => {
         if (nextProjectId) {
           try {
             await loadLiveProjectData(nextProjectId);
+            void prefetchProjectsInBackground(refreshedProjects, nextProjectId);
           } catch {
             // Keep cached state if live refresh fails.
           }
@@ -406,17 +683,19 @@ export const GreenSyncProvider = ({ children }: { children: ReactNode }) => {
     loadCachedProjectLists,
     loadLiveProjectData,
     pickProjectId,
+    prefetchProjectsInBackground,
     refreshStats,
     selectedProjectId,
     session,
+    sponsorSession,
     syncing,
   ]);
 
   const isOrgPaused = useMemo(() => {
-    if (!session || session.auth_mode === "env_admin") return false;
+    if (!session || sponsorSession || session.auth_mode === "env_admin") return false;
     const status = String(session.user.organization_status || "").toLowerCase();
     return status === "paused" || status === "read_only";
-  }, [session]);
+  }, [session, sponsorSession]);
 
   const refreshProjectAfterMutation = useCallback(
     async (projectId: number, mode: "live" | "cached") => {
@@ -443,11 +722,15 @@ export const GreenSyncProvider = ({ children }: { children: ReactNode }) => {
 
   const refreshSelectedProjectLive = useCallback(async () => {
     if (!session || !isOnline || !selectedProjectId) return;
+    if (liveProjectRefreshInFlightRef.current) return;
+    liveProjectRefreshInFlightRef.current = true;
     try {
       await loadLiveProjectData(selectedProjectId);
       await refreshStats();
     } catch {
       // Keep current state when background refresh fails.
+    } finally {
+      liveProjectRefreshInFlightRef.current = false;
     }
   }, [isOnline, loadLiveProjectData, refreshStats, selectedProjectId, session]);
 
@@ -468,29 +751,54 @@ export const GreenSyncProvider = ({ children }: { children: ReactNode }) => {
   );
 
   const createTree = useCallback(
-    async (input: GreenTreeCreateInput): Promise<MutationResult> => {
-      if (!session) throw new Error("Session not available.");
+    async (
+      input: GreenTreeCreateInput,
+      options?: { onProgress?: (progress: TreeCreateProgressState) => void },
+    ): Promise<MutationResult> => {
+      if (!session || sponsorSession) throw new Error("Field session not available.");
       if (isOrgPaused) throw new Error("Organization is paused. Write operations are disabled.");
       try {
         if (!isOnline) throw new Error("offline");
-        const { created, photoLinked } = await runTreeCreation(session, input);
+        const { created, photoLinked } = await runTreeCreation(session, input, options);
         await refreshProjectAfterMutation(input.projectId, "live");
         const hasReviewTask = Number(created.review_task_id || 0) > 0;
+        const hasPhotos = Array.isArray(input.photos) && input.photos.length > 0;
+        const isAgricRecord = Boolean(input.recordProfileData && Object.keys(input.recordProfileData).length);
         const message =
-          input.treeOrigin === "existing_inventory"
+          isAgricRecord
             ? hasReviewTask
               ? photoLinked
-                ? "Existing tree submitted for supervisor review."
+                ? hasPhotos
+                  ? "Plot submitted for supervisor review with photos attached."
+                  : "Plot submitted for supervisor review."
+                : "Plot submitted for supervisor review. Photo upload failed."
+              : photoLinked
+                ? hasPhotos
+                  ? "Plot saved live with photos attached."
+                  : "Plot saved live."
+                : "Plot saved live. Photo upload failed."
+            : input.treeOrigin === "existing_inventory"
+            ? hasReviewTask
+              ? photoLinked
+                ? hasPhotos
+                  ? "Existing tree submitted for supervisor review with photos attached."
+                  : "Existing tree submitted for supervisor review."
                 : "Existing tree submitted for supervisor review. Photo upload failed."
               : photoLinked
-                ? "Existing tree saved."
+                ? hasPhotos
+                  ? "Existing tree saved with photos attached."
+                  : "Existing tree saved."
                 : "Existing tree saved. Photo upload failed."
             : hasReviewTask
               ? photoLinked
-                ? "Tree submitted for supervisor review."
+                ? hasPhotos
+                  ? "Tree submitted for supervisor review with photos attached."
+                  : "Tree submitted for supervisor review."
                 : "Tree submitted for supervisor review. Photo upload failed."
               : photoLinked
-                ? "Tree saved live."
+                ? hasPhotos
+                  ? "Tree saved live with photos attached."
+                  : "Tree saved live."
                 : "Tree saved live. Photo upload failed.";
         setSyncNotice(message);
         return { queued: false, message };
@@ -503,16 +811,20 @@ export const GreenSyncProvider = ({ children }: { children: ReactNode }) => {
           setTrees((prev) => [optimisticTree, ...prev.filter((item) => item.id !== optimisticTree.id)]);
         }
         await refreshProjectAfterMutation(input.projectId, "cached");
-        setSyncNotice("Tree capture queued offline and will sync automatically.");
-        return { queued: true, message: "Tree queued offline." };
+        if (input.recordProfileData && Object.keys(input.recordProfileData).length) {
+          setSyncNotice("Plot capture queued offline and will sync with photos automatically when the network is stable.");
+          return { queued: true, message: "Plot queued offline with photos." };
+        }
+        setSyncNotice("Tree capture queued offline and will sync with photos automatically when the network is stable.");
+        return { queued: true, message: "Tree queued offline with photos." };
       }
     },
-    [isOnline, isOrgPaused, refreshProjectAfterMutation, selectedProjectId, session],
+    [isOnline, isOrgPaused, refreshProjectAfterMutation, selectedProjectId, session, sponsorSession],
   );
 
   const updateTree = useCallback(
     async (input: GreenTreeUpdateInput): Promise<MutationResult> => {
-      if (!session) throw new Error("Session not available.");
+      if (!session || sponsorSession) throw new Error("Field session not available.");
       if (isOrgPaused) throw new Error("Organization is paused. Write operations are disabled.");
       try {
         if (!isOnline) throw new Error("offline");
@@ -530,17 +842,37 @@ export const GreenSyncProvider = ({ children }: { children: ReactNode }) => {
         return { queued: true, message: "Tree record queued offline." };
       }
     },
-    [isOnline, isOrgPaused, refreshProjectAfterMutation, session],
+    [isOnline, isOrgPaused, refreshProjectAfterMutation, session, sponsorSession],
+  );
+
+  const deleteTree = useCallback(
+    async (input: { projectId: number; treeId: number }): Promise<MutationResult> => {
+      if (!session || sponsorSession) throw new Error("Field session not available.");
+      if (isOrgPaused) throw new Error("Organization is paused. Write operations are disabled.");
+      if (!isOnline) {
+        throw new Error("Tree deletion needs network.");
+      }
+      await deleteGreenTree({
+        treeId: input.treeId,
+        projectId: input.projectId,
+        actorName: session.user.full_name,
+      });
+      await refreshProjectAfterMutation(input.projectId, "live");
+      setSyncNotice("Tree deleted live.");
+      return { queued: false, message: "Tree deleted live." };
+    },
+    [isOnline, isOrgPaused, refreshProjectAfterMutation, session, sponsorSession],
   );
 
   const saveTaskUpdate = useCallback(
     async (input: GreenTaskMutationInput): Promise<MutationResult> => {
-      if (!session) throw new Error("Session not available.");
+      if (!session || sponsorSession) throw new Error("Field session not available.");
       if (isOrgPaused) throw new Error("Organization is paused. Write operations are disabled.");
       const payload = { ...input, actorName: session.user.full_name };
       try {
         if (!isOnline) throw new Error("offline");
         await runTaskMutation(session, payload, "update");
+        suppressedTaskNotificationIdsRef.current.add(Number(payload.taskId));
         await applyTaskLocalPatch(payload.projectId, payload.taskId, (task) => ({
           ...task,
           status: payload.status ?? task.status,
@@ -565,17 +897,18 @@ export const GreenSyncProvider = ({ children }: { children: ReactNode }) => {
         return { queued: true, message: "Task update queued offline." };
       }
     },
-    [applyTaskLocalPatch, isOnline, isOrgPaused, refreshProjectAfterMutation, session],
+    [applyTaskLocalPatch, isOnline, isOrgPaused, refreshProjectAfterMutation, session, sponsorSession],
   );
 
   const submitTask = useCallback(
     async (input: GreenTaskMutationInput): Promise<MutationResult> => {
-      if (!session) throw new Error("Session not available.");
+      if (!session || sponsorSession) throw new Error("Field session not available.");
       if (isOrgPaused) throw new Error("Organization is paused. Write operations are disabled.");
       const payload = { ...input, actorName: session.user.full_name };
       try {
         if (!isOnline) throw new Error("offline");
         await runTaskMutation(session, payload, "submit");
+        suppressedTaskNotificationIdsRef.current.add(Number(payload.taskId));
         await applyTaskLocalPatch(payload.projectId, payload.taskId, (task) => ({
           ...task,
           status: "done",
@@ -601,11 +934,17 @@ export const GreenSyncProvider = ({ children }: { children: ReactNode }) => {
         return { queued: true, message: "Task submission queued offline." };
       }
     },
-    [applyTaskLocalPatch, isOnline, isOrgPaused, refreshProjectAfterMutation, session],
+    [applyTaskLocalPatch, isOnline, isOrgPaused, refreshProjectAfterMutation, session, sponsorSession],
   );
 
+  const refreshAllRef = useRef(refreshAll);
   useEffect(() => {
-    if (!session) {
+    refreshAllRef.current = refreshAll;
+  }, [refreshAll]);
+
+  useEffect(() => {
+    if (!session || sponsorSession) {
+      projectsRef.current = [];
       setProjects([]);
       setTasks([]);
       setTrees([]);
@@ -619,24 +958,46 @@ export const GreenSyncProvider = ({ children }: { children: ReactNode }) => {
       return;
     }
     void requestGreenNotificationPermission().catch(() => {});
-    void refreshAll();
-  }, [refreshAll, session]);
+    void refreshAllRef.current();
+    // Intentionally keyed on session identity + sponsor flag only - NOT on `refreshAll` itself.
+    // `refreshAll`'s identity shifts whenever `isOnline` flips (via its dependency chain), and an
+    // unstable connection can flip that many times a minute; including it here previously caused
+    // a full reload (and, via re-entrant overlapping fetches, occasional stale-data races) on every
+    // single network flap instead of once per login.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session, sponsorSession]);
 
   useEffect(() => {
-    seenTaskIdsRef.current = new Set();
-    seenOrderIdsRef.current = new Set();
+    projectsRef.current = projects;
+  }, [projects]);
+
+  useEffect(() => {
+    taskSnapshotRef.current = new Map();
+    orderSnapshotRef.current = new Map();
+    suppressedTaskNotificationIdsRef.current = new Set();
     taskNotifyPrimedRef.current = false;
     orderNotifyPrimedRef.current = false;
     initialAutoSyncRef.current = false;
+    backgroundPrefetchKeyRef.current = "";
+    backgroundPrefetchRunningRef.current = false;
   }, [selectedProjectId, session?.user.full_name]);
 
   useEffect(() => {
+    if (sponsorSession) return;
     let mounted = true;
     const onNetworkChange = (state: Network.NetworkState) => {
       const online = Boolean(state.isConnected && state.isInternetReachable !== false);
       if (!mounted) return;
       setIsOnline(online);
-      if (online) {
+      // Only fire on a genuine offline -> online edge. A flaky/unstable connection can flap
+      // between connected and disconnected many times a minute, and this listener used to
+      // kick off a sync on every single "online" reading (even while already online) - on a
+      // shaky signal that meant a near-continuous stream of sync attempts, which is what made
+      // the app feel like it kept reloading. wasOnlineRef starts at null (unknown) so the very
+      // first reading never counts as a "reconnect".
+      const previouslyOnline = wasOnlineRef.current;
+      wasOnlineRef.current = online;
+      if (online && previouslyOnline === false) {
         void syncNow();
       }
     };
@@ -648,6 +1009,7 @@ export const GreenSyncProvider = ({ children }: { children: ReactNode }) => {
         const online = Boolean(network.isConnected && network.isInternetReachable !== false);
         if (!mounted) return;
         setIsOnline(online);
+        wasOnlineRef.current = online;
         if (online) {
           await syncNow();
         } else {
@@ -660,22 +1022,22 @@ export const GreenSyncProvider = ({ children }: { children: ReactNode }) => {
       subscription.remove();
       appStateSubscription.remove();
     };
-  }, [refreshStats, syncNow]);
+  }, [refreshStats, sponsorSession, syncNow]);
 
   useEffect(() => {
-    if (!session || !isOnline || !selectedProjectId) return;
+    if (sponsorSession || !session || !isOnline || !selectedProjectId) return;
     const timer = setInterval(() => {
       void refreshSelectedProjectLive();
     }, 45000);
     return () => clearInterval(timer);
-  }, [isOnline, refreshSelectedProjectLive, selectedProjectId, session]);
+  }, [isOnline, refreshSelectedProjectLive, selectedProjectId, session, sponsorSession]);
 
   useEffect(() => {
-    if (!session || !isOnline || syncing || initialAutoSyncRef.current) return;
+    if (sponsorSession || !session || !isOnline || syncing || initialAutoSyncRef.current) return;
     if (offlineStats.queued <= 0) return;
     initialAutoSyncRef.current = true;
     void syncNow();
-  }, [isOnline, offlineStats.queued, session, syncNow, syncing]);
+  }, [isOnline, offlineStats.queued, session, sponsorSession, syncNow, syncing]);
 
   const selectedProject = useMemo(
     () => projects.find((project) => project.id === selectedProjectId) || projects[0] || null,
@@ -721,12 +1083,14 @@ export const GreenSyncProvider = ({ children }: { children: ReactNode }) => {
       syncNow,
       createTree,
       updateTree,
+      deleteTree,
       saveTaskUpdate,
       submitTask,
       clearError: () => setError(""),
     }),
     [
       createTree,
+      deleteTree,
       custodians,
       distributionAllocations,
       error,

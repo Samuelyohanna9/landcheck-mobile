@@ -1,19 +1,39 @@
+import Constants from "expo-constants";
 import * as Notifications from "expo-notifications";
 import { Platform } from "react-native";
 
-Notifications.setNotificationHandler({
-  handleNotification: async () => ({
-    shouldShowBanner: true,
-    shouldShowList: true,
-    shouldPlaySound: true,
-    shouldSetBadge: false,
-  }),
-});
+const resolveExpoRuntime = () => {
+  const appOwnership = String((Constants as { appOwnership?: string | null }).appOwnership || "").trim().toLowerCase();
+  const executionEnvironment = String(
+    (Constants as { executionEnvironment?: string | null }).executionEnvironment || "",
+  ).trim().toLowerCase();
+  return {
+    appOwnership,
+    executionEnvironment,
+  };
+};
 
-const GREEN_CHANNEL_ID = "green-alerts";
-const SPONSOR_CHANNEL_ID = "sponsor-alerts";
+export const supportsNativeNotifications = () => {
+  const runtime = resolveExpoRuntime();
+  return runtime.appOwnership !== "expo" && runtime.executionEnvironment !== "storeclient";
+};
+
+if (supportsNativeNotifications()) {
+  Notifications.setNotificationHandler({
+    handleNotification: async () => ({
+      shouldShowBanner: true,
+      shouldShowList: true,
+      shouldPlaySound: true,
+      shouldSetBadge: false,
+    }),
+  });
+}
+
+export const GREEN_CHANNEL_ID = "green-alerts";
+export const SPONSOR_CHANNEL_ID = "sponsor-alerts";
 
 export const setupGreenNotifications = async () => {
+  if (!supportsNativeNotifications()) return;
   if (Platform.OS === "android") {
     await Notifications.setNotificationChannelAsync(GREEN_CHANNEL_ID, {
       name: "LandCheck Green Alerts",
@@ -31,6 +51,7 @@ export const setupGreenNotifications = async () => {
 };
 
 export const requestGreenNotificationPermission = async () => {
+  if (!supportsNativeNotifications()) return false;
   const current = await Notifications.getPermissionsAsync();
   if (current.granted || current.ios?.status === Notifications.IosAuthorizationStatus.PROVISIONAL) {
     return true;
@@ -46,6 +67,7 @@ export const requestGreenNotificationPermission = async () => {
 };
 
 export const pushGreenNotification = async (title: string, body: string) => {
+  if (!supportsNativeNotifications()) return;
   const permission = await Notifications.getPermissionsAsync();
   const allowed = Boolean(permission.granted || permission.ios?.status === Notifications.IosAuthorizationStatus.PROVISIONAL);
   if (!allowed) return;

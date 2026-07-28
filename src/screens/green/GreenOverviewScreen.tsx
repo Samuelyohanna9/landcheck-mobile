@@ -1,4 +1,5 @@
 import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
+import { LinearGradient } from "expo-linear-gradient";
 import { useNavigation } from "@react-navigation/native";
 import { useEffect, useMemo, useState } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
@@ -6,32 +7,55 @@ import Svg, { Circle } from "react-native-svg";
 import { ActionTile } from "../../components/ActionTile";
 import { BrandMark } from "../../components/BrandMark";
 import { EmptyState } from "../../components/EmptyState";
-import { MetricTile } from "../../components/MetricTile";
+import { FieldIdentityAvatar } from "../../components/FieldIdentityAvatar";
 import { ScreenSurface } from "../../components/ScreenSurface";
-import { SectionCard } from "../../components/SectionCard";
 import { SelectSheet } from "../../components/SelectSheet";
-import { StatusChip } from "../../components/StatusChip";
-import { fetchOrganizationBranding, fetchProjectCarbonSummary, fetchProjectDetail } from "../../api/green";
+import { fetchProjectDetail } from "../../api/green";
 import { useAuth } from "../../context/AuthContext";
 import { useGreenSync } from "../../context/GreenSyncContext";
 import {
   ATTENTION_TREE_STATUSES,
   DEAD_TREE_STATUSES,
+  FIELD_CAPTURE_TASK_TYPE,
   HEALTHY_TREE_STATUSES,
   PLANTING_TASK_TYPES,
   isTaskApproved,
+  isTaskMetadataEditRequested,
   isTaskRejected,
   isTaskSubmitted,
   normalizeName,
   normalizeTaskState,
 } from "../../green/workflow";
-import type { CarbonSummary } from "../../types/domain";
+import { getWorkflowLabels, getProjectWorkflowProfile, isAgricProject, isCsrProject, isReliefRecoveryProject } from "../../green/projectProfile";
+import { filterVisibleTreeRecords } from "../../green/treeRecords";
+import { cacheProjectDetail, readCachedProjectDetail } from "../../storage/database";
+import type { CarbonSummary, ProjectDetailSummary } from "../../types/domain";
 import { colors, radii, spacing } from "../../theme/tokens";
 
-const SURVIVAL_GAUGE_SIZE = 68;
-const SURVIVAL_GAUGE_STROKE = 7;
-const SURVIVAL_GAUGE_RADIUS = (SURVIVAL_GAUGE_SIZE - SURVIVAL_GAUGE_STROKE) / 2;
-const SURVIVAL_GAUGE_CIRCUMFERENCE = 2 * Math.PI * SURVIVAL_GAUGE_RADIUS;
+const GAUGE_SIZE = 78;
+const GAUGE_STROKE = 8;
+const GAUGE_RADIUS = (GAUGE_SIZE - GAUGE_STROKE) / 2;
+const GAUGE_CIRCUMFERENCE = 2 * Math.PI * GAUGE_RADIUS;
+
+const getGreeting = (): string => {
+  const h = new Date().getHours();
+  if (h < 12) return "Good morning";
+  if (h < 18) return "Good afternoon";
+  return "Good evening";
+};
+
+const getGreetingIcon = (): "sunny-outline" | "partly-sunny-outline" | "moon-outline" => {
+  const h = new Date().getHours();
+  if (h < 12) return "sunny-outline";
+  if (h < 18) return "partly-sunny-outline";
+  return "moon-outline";
+};
+
+const getSurvivalQuality = (rate: number) => {
+  if (rate >= 80) return { label: "Excellent", note: "Keep it up! 🎉", bg: "rgba(42,168,82,0.14)", color: colors.primaryDark };
+  if (rate >= 50) return { label: "Good progress", note: "Keep going 👍", bg: "rgba(217,119,6,0.14)", color: "#7a4b00" };
+  return { label: "Needs attention", note: "Act now ⚠️", bg: "rgba(220,38,38,0.12)", color: "#b91c1c" };
+};
 
 export const GreenOverviewScreen = () => {
   const navigation = useNavigation<any>();
@@ -54,324 +78,337 @@ export const GreenOverviewScreen = () => {
   } = useGreenSync();
 
   const [projectPickerOpen, setProjectPickerOpen] = useState(false);
-  const [carbonSummary, setCarbonSummary] = useState<CarbonSummary | null>(null);
+  const [projectDetail, setProjectDetail] = useState<ProjectDetailSummary | null>(null);
   const [carbonError, setCarbonError] = useState("");
-  const [liveProjectBranding, setLiveProjectBranding] = useState<{
-    organization_id?: number | null;
-    organization_name?: string | null;
-    organization_logo_url?: string | null;
-  } | null>(null);
-  const [organizationBranding, setOrganizationBranding] = useState<{ name?: string | null; logo_url?: string | null } | null>(null);
-  const organizationId =
-    Number(liveProjectBranding?.organization_id || selectedProject?.organization_id || session?.user.organization_id || 0) || null;
-  const organizationName =
-    liveProjectBranding?.organization_name ||
-    organizationBranding?.name ||
-    selectedProject?.organization_name ||
-    session?.user.organization_name ||
-    "";
+
+  const carbonSummary = useMemo<CarbonSummary | null>(() => {
+    if (!projectDetail?.carbon) return null;
+    return {
+      ...projectDetail.carbon,
+      project_id: Number(projectDetail.carbon.project_id || projectDetail.id || selectedProjectId || 0) || null,
+    };
+  }, [projectDetail?.carbon, projectDetail?.id, selectedProjectId]);
   const organizationLogoUrl =
-    liveProjectBranding?.organization_logo_url ||
-    organizationBranding?.logo_url ||
+    projectDetail?.organization_logo_url ||
     selectedProject?.organization_logo_url ||
     session?.user.organization_logo_url ||
     null;
 
+  const greeting = useMemo(() => getGreeting(), []);
+  const greetingIcon = useMemo(() => getGreetingIcon(), []);
+  const firstName = useMemo(() => {
+    const name = String(session?.user.full_name || "").trim();
+    return name.split(" ")[0] || name || "there";
+  }, [session?.user.full_name]);
+
   const currentUserName = normalizeName(session?.user.full_name);
+  const workflowLabels = useMemo(() => getWorkflowLabels(selectedProject || null), [selectedProject]);
+  const agricMode = useMemo(() => isAgricProject(selectedProject || null), [selectedProject]);
+  const reliefMode = useMemo(() => isReliefRecoveryProject(selectedProject || null), [selectedProject]);
+  const csrMode = useMemo(() => isCsrProject(selectedProject || null), [selectedProject]);
+  const workflowProfile = useMemo(() => getProjectWorkflowProfile(selectedProject || null), [selectedProject]);
+  const impactEyebrow = reliefMode ? "Recovery evidence" : agricMode ? "Programme evidence" : csrMode ? "Verified CSR implementation" : "Verified climate action";
+  const impactChipLabels = reliefMode
+    ? ["Mapped sites", "Relief updates", "Approved records"]
+    : agricMode
+      ? ["Mapped plots", "Field updates", "Approved records"]
+      : ["Mapped trees", "Care updates", "Photo proof"];
   const scopedTrees = useMemo(() => {
     const custodianId = Number(matchedCustodian?.id || 0);
-    return trees.filter((tree) => {
-      if (isCustodianUser && custodianId > 0) {
-        return Number(tree.custodian_id || 0) === custodianId;
-      }
+    return filterVisibleTreeRecords(trees).filter((tree) => {
+      if (isCustodianUser && custodianId > 0) return Number(tree.custodian_id || 0) === custodianId;
       if (custodianId > 0 && Number(tree.custodian_id || 0) === custodianId) return true;
       return normalizeName(tree.created_by) === currentUserName;
     });
   }, [currentUserName, isCustodianUser, matchedCustodian?.id, trees]);
 
-  const healthyTrees = scopedTrees.filter((tree) => HEALTHY_TREE_STATUSES.has(normalizeTaskState(tree.status))).length;
-  const deadTrees = scopedTrees.filter((tree) => DEAD_TREE_STATUSES.has(normalizeTaskState(tree.status))).length;
-  const needsAttentionTrees = scopedTrees.filter((tree) => ATTENTION_TREE_STATUSES.has(normalizeTaskState(tree.status))).length;
+  const healthyTrees = scopedTrees.filter((t) => HEALTHY_TREE_STATUSES.has(normalizeTaskState(t.status))).length;
+  const deadTrees = scopedTrees.filter((t) => DEAD_TREE_STATUSES.has(normalizeTaskState(t.status))).length;
+  const needsAttentionTrees = scopedTrees.filter((t) => ATTENTION_TREE_STATUSES.has(normalizeTaskState(t.status))).length;
   const survivalRate = scopedTrees.length ? Math.round((healthyTrees / scopedTrees.length) * 100) : 0;
+  const survivalQuality = useMemo(() => getSurvivalQuality(survivalRate), [survivalRate]);
+  const gaugeDashOffset = GAUGE_CIRCUMFERENCE * (1 - survivalRate / 100);
 
   const myTaskCounts = useMemo(() => {
-    if (isCustodianUser) {
-      return { total: 0, pending: 0, done: 0, submitted: 0, rejected: 0, undone: 0 };
-    }
-    const total = tasks.length;
-    const done = tasks.filter((task) => isTaskApproved(task)).length;
-    const submitted = tasks.filter((task) => isTaskSubmitted(task)).length;
-    const rejected = tasks.filter((task) => isTaskRejected(task)).length;
-    const pending = tasks.filter((task) => !isTaskApproved(task) && !isTaskSubmitted(task)).length;
-    return { total, pending, done, submitted, rejected, undone: pending };
+    if (isCustodianUser) return { total: 0, pending: 0, done: 0, submitted: 0, rejected: 0, metadataEdit: 0, review: 0, undone: 0 };
+    const maintenanceTasks = tasks.filter(
+      (t) =>
+        !PLANTING_TASK_TYPES.has(normalizeTaskState(t.task_type)) &&
+        normalizeTaskState(t.task_type) !== FIELD_CAPTURE_TASK_TYPE &&
+        !isTaskRejected(t) &&
+        !isTaskMetadataEditRequested(t),
+    );
+    const reviewTasks = tasks.filter((t) => isTaskRejected(t) || isTaskMetadataEditRequested(t));
+    const total = maintenanceTasks.length;
+    const done = maintenanceTasks.filter(isTaskApproved).length;
+    const submitted = maintenanceTasks.filter(isTaskSubmitted).length;
+    const rejected = reviewTasks.filter(isTaskRejected).length;
+    const metadataEdit = reviewTasks.filter(isTaskMetadataEditRequested).length;
+    const pending = maintenanceTasks.filter((t) => !isTaskApproved(t) && !isTaskSubmitted(t)).length;
+    return { total, pending, done, submitted, rejected, metadataEdit, review: rejected + metadataEdit, undone: pending };
   }, [isCustodianUser, tasks]);
 
   const plantingReviewCounts = useMemo(() => {
-    const plantingTasks = tasks.filter((task) => PLANTING_TASK_TYPES.has(normalizeTaskState(task.task_type)));
+    const plantingTasks = tasks.filter((t) => PLANTING_TASK_TYPES.has(normalizeTaskState(t.task_type)));
     return {
-      submitted: plantingTasks.filter((task) => isTaskSubmitted(task)).length,
-      approved: plantingTasks.filter((task) => isTaskApproved(task)).length,
+      submitted: plantingTasks.filter(isTaskSubmitted).length,
+      approved: plantingTasks.filter(isTaskApproved).length,
     };
   }, [tasks]);
 
   const pendingPlanting = useMemo(() => {
     if (isCustodianUser && matchedCustodian) {
       return distributionAllocations
-        .filter((row) => Number(row.custodian_id || 0) === Number(matchedCustodian.id))
-        .reduce((sum, row) => sum + Math.max(Number(row.quantity_allocated || 0) - scopedTrees.length, 0), 0);
+        .filter((r) => Number(r.custodian_id || 0) === Number(matchedCustodian.id))
+        .reduce((sum, r) => sum + Math.max(Number(r.quantity_allocated || 0) - scopedTrees.length, 0), 0);
     }
-    const plantingOrders = workOrders.filter((order) => normalizeTaskState(order.work_type) === "planting");
-    return plantingOrders.reduce((sum, order) => {
-      const target = Number(order.target_trees || 0);
-      const planted = Number(order.planted_count || 0);
-      return sum + Math.max(target - planted, 0);
-    }, 0);
-  }, [distributionAllocations, isCustodianUser, matchedCustodian, scopedTrees.length, workOrders]);
-
-  const projectOptions = projects.map((project) => ({
-    label: project.name,
-    value: String(project.id),
-    description: project.location_text || "Project available in this organization scope",
-  }));
-
-  useEffect(() => {
-    let active = true;
-    const loadCarbon = async () => {
-      if (!selectedProjectId) {
-        if (active) {
-          setCarbonSummary(null);
-          setCarbonError("");
-        }
-        return;
-      }
-      if (!isOnline) {
-        if (active) setCarbonError("");
-        return;
-      }
-      try {
-        const actorName = String(session?.user.full_name || "").trim();
-        const summary = await fetchProjectCarbonSummary(selectedProjectId, actorName || undefined);
-        if (!active) return;
-        setCarbonSummary(summary);
-        setCarbonError("");
-      } catch (error) {
-        if (!active) return;
-        setCarbonSummary(null);
-        setCarbonError(error instanceof Error ? error.message : "Carbon impact is unavailable right now.");
-      }
-    };
-    void loadCarbon();
-    return () => {
-      active = false;
-    };
-  }, [isOnline, selectedProjectId, session?.user.full_name]);
-
-  useEffect(() => {
-    let active = true;
-    const actorName = String(session?.user.full_name || "").trim();
-    const loadProjectBranding = async () => {
-      if (!selectedProjectId) {
-        if (active) setLiveProjectBranding(null);
-        return;
-      }
-      if (!isOnline) {
-        if (active) {
-          setLiveProjectBranding({
-            organization_id: selectedProject?.organization_id || null,
-            organization_name: selectedProject?.organization_name || null,
-            organization_logo_url: selectedProject?.organization_logo_url || null,
-          });
-        }
-        return;
-      }
-      try {
-        const detail = await fetchProjectDetail(selectedProjectId, actorName || undefined);
-        if (!active) return;
-        setLiveProjectBranding({
-          organization_id: detail.organization_id || null,
-          organization_name: detail.organization_name || null,
-          organization_logo_url: detail.organization_logo_url || null,
-        });
-      } catch {
-        if (!active) return;
-        setLiveProjectBranding({
-          organization_id: selectedProject?.organization_id || null,
-          organization_name: selectedProject?.organization_name || null,
-          organization_logo_url: selectedProject?.organization_logo_url || null,
-        });
-      }
-    };
-    void loadProjectBranding();
-    return () => {
-      active = false;
-    };
-  }, [
-    isOnline,
-    selectedProject?.organization_id,
-    selectedProject?.organization_logo_url,
-    selectedProject?.organization_name,
-    selectedProjectId,
-    session?.user.full_name,
-  ]);
-
-  useEffect(() => {
-    let active = true;
-    const loadBranding = async () => {
-      if (!organizationId) {
-        if (active) setOrganizationBranding(null);
-        return;
-      }
-
-      if (!isOnline) {
-        if (active) {
-          setOrganizationBranding({
-            name: selectedProject?.organization_name || session?.user.organization_name || null,
-            logo_url: selectedProject?.organization_logo_url || session?.user.organization_logo_url || null,
-          });
-        }
-        return;
-      }
-
-      try {
-        const branding = await fetchOrganizationBranding(organizationId);
-        if (!active) return;
-        setOrganizationBranding({
-          name: branding.name || null,
-          logo_url: branding.logo_url || null,
-        });
-      } catch {
-        if (!active) return;
-        setOrganizationBranding({
-          name: selectedProject?.organization_name || session?.user.organization_name || null,
-          logo_url: selectedProject?.organization_logo_url || session?.user.organization_logo_url || null,
-        });
-      }
-    };
-    void loadBranding();
-    return () => {
-      active = false;
-    };
-  }, [
-    isOnline,
-    organizationId,
-    liveProjectBranding?.organization_logo_url,
-    liveProjectBranding?.organization_name,
-    selectedProject?.organization_logo_url,
-    selectedProject?.organization_name,
-    session?.user.organization_logo_url,
-    session?.user.organization_name,
-  ]);
+    const workOrderPending = workOrders
+      .filter((o) => normalizeTaskState(o.work_type) === "planting")
+      .reduce((sum, o) => sum + Math.max(Number(o.target_trees || 0) - Number(o.planted_count || 0), 0), 0);
+    if (agricMode || reliefMode) {
+      const fieldCapturePending = tasks.filter((t) => {
+        if (normalizeTaskState(t.task_type) !== FIELD_CAPTURE_TASK_TYPE) return false;
+        const status = normalizeTaskState(t.status);
+        const reviewState = normalizeTaskState(t.review_state);
+        return !(reviewState === "approved" || status === "done" || status === "completed" || status === "closed");
+      }).length;
+      return workOrderPending + fieldCapturePending;
+    }
+    return workOrderPending;
+  }, [agricMode, distributionAllocations, isCustodianUser, matchedCustodian, reliefMode, scopedTrees.length, tasks, workOrders]);
 
   const annualPerTreeKg = useMemo(() => {
     if (!carbonSummary || healthyTrees <= 0) return 0;
     return carbonSummary.annual_co2_kg / healthyTrees;
   }, [carbonSummary, healthyTrees]);
 
+  const projectOptions = projects.map((p) => ({
+    label: p.name,
+    value: String(p.id),
+    description: p.location_text || "Project available in this organization scope",
+  }));
+
+  useEffect(() => {
+    let active = true;
+    const load = async () => {
+      if (!selectedProjectId) {
+        if (active) {
+          setProjectDetail(null);
+          setCarbonError("");
+        }
+        return;
+      }
+
+      const cachedDetail = await readCachedProjectDetail("green", selectedProjectId);
+      if (active && cachedDetail) {
+        setProjectDetail(cachedDetail);
+        setCarbonError("");
+      }
+
+      if (!isOnline) return;
+
+      try {
+        const actorName = String(session?.user.full_name || "").trim();
+        const detail = await fetchProjectDetail(selectedProjectId, actorName || undefined);
+        if (!active) return;
+        setProjectDetail(detail);
+        setCarbonError("");
+        await cacheProjectDetail("green", selectedProjectId, detail);
+      } catch (e) {
+        if (!active) return;
+        setCarbonError(e instanceof Error ? e.message : "Carbon impact is unavailable right now.");
+      }
+    };
+    void load();
+    return () => { active = false; };
+  }, [isOnline, selectedProjectId, session?.user.full_name]);
+
+  const syncLabel = syncProgress.active
+    ? `Sending ${Math.min(syncProgress.completed, syncProgress.total)} of ${syncProgress.total}`
+    : offlineStats.queued > 0
+      ? `${offlineStats.queued} waiting to send`
+      : "All synced";
+
   return (
     <ScreenSurface refreshing={false} onRefresh={() => void refreshAll()} contentContainerStyle={styles.content}>
-      <View style={styles.heroPanel}>
+
+      {/* ─── HERO ─── */}
+      <LinearGradient colors={["#0f2d1a", "#1a5c36"]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.hero}>
+        {/* Brand row – logos untouched */}
         <View style={styles.heroBrandRow}>
-          <View style={styles.heroBrandLogos}>
-            <BrandMark size={44} />
-            {(organizationLogoUrl || organizationName) ? (
-              <BrandMark
-                size={44}
-                logoUrl={organizationLogoUrl}
-                fallbackToDefault={false}
-                variant="partner"
-              />
-            ) : null}
+          <View style={styles.heroBrandIdentity}>
+            <View style={styles.heroBrandLogos}>
+              <BrandMark size={44} />
+              {organizationLogoUrl ? (
+                <BrandMark size={44} logoUrl={organizationLogoUrl} fallbackToDefault={false} variant="partner" />
+              ) : null}
+            </View>
+            <View style={styles.heroBrandText}>
+              <Text style={styles.heroTitle}>LandCheck <Text style={styles.heroTitleAccent}>{workflowProfile === "agric" ? "Agric" : workflowProfile === "relief_recovery" ? "Relief" : workflowProfile === "csr" ? "CSR" : "Green"}</Text></Text>
+              <Text style={styles.heroSubtitle}>{workflowLabels.dashboardSubtitle}</Text>
+            </View>
           </View>
-          <View style={styles.heroBrandText}>
-            <Text style={styles.heroTitle}>
-              LandCheck <Text style={styles.heroTitleAccent}>Green</Text>
-            </Text>
-            <Text style={styles.heroSubtitle}>Field dashboard</Text>
-          </View>
+          <FieldIdentityAvatar
+            userId={session?.user.id}
+            displayName={session?.user.full_name}
+            photoUri={session?.user.profile_photo_url}
+            size={46}
+            borderColor="rgba(255,255,255,0.18)"
+            accentColor="#ffffff"
+          />
         </View>
 
+        {/* Greeting */}
+        <View style={styles.heroGreetingRow}>
+          <Ionicons name={greetingIcon} size={16} color="rgba(255,255,255,0.82)" />
+          <Text style={styles.heroGreeting}>
+            {greeting},{" "}
+            <Text style={styles.heroGreetingName}>{firstName}!</Text>
+          </Text>
+        </View>
+
+        {/* Status row */}
         <View style={styles.heroStatusRow}>
-          <View style={styles.heroStatusCard}>
-            <Text style={styles.heroStatusLabel}>{isOnline ? "ONLINE" : "OFFLINE"}</Text>
-            <Text style={styles.heroStatusValue}>
-              {syncProgress.active
-                ? `Sending ${Math.min(syncProgress.completed, syncProgress.total)} of ${syncProgress.total}`
-                : offlineStats.queued > 0
-                  ? `${offlineStats.queued} waiting`
-                  : "All synced"}
-            </Text>
-            {syncProgress.active ? <View style={styles.heroStatusBar}><View style={[styles.heroStatusBarFill, { width: `${Math.max(syncProgress.percent, 8)}%` }]} /></View> : null}
+          <View style={styles.heroOnlinePill}>
+            <View style={[styles.heroOnlineDot, { backgroundColor: isOnline ? "#a3f0b0" : "#fca5a5" }]} />
+            <View style={{ flex: 1, minWidth: 0 }}>
+              <Text style={styles.heroOnlineLabel}>{isOnline ? "ONLINE" : "OFFLINE"}</Text>
+              <Text style={styles.heroOnlineValue} numberOfLines={1}>{syncLabel}</Text>
+            </View>
           </View>
           <View style={styles.heroUserPill}>
-            <Text style={styles.heroUserText}>{session?.user.full_name || "Current user"}</Text>
+            <Ionicons name="person-outline" size={13} color="rgba(255,255,255,0.75)" />
+            <Text style={styles.heroUserText} numberOfLines={1}>{session?.user.full_name || "Field user"}</Text>
           </View>
         </View>
-      </View>
 
-      <View style={styles.setupCard}>
-        <Text style={styles.setupTitle}>Project & Field Setup</Text>
+        {/* Sync progress bar */}
+        {syncProgress.active ? (
+          <View style={styles.heroProgressBar}>
+            <View style={[styles.heroProgressFill, { width: `${Math.max(syncProgress.percent, 6)}%` as any }]} />
+          </View>
+        ) : null}
+      </LinearGradient>
 
-        <Text style={styles.fieldLabel}>Project Project</Text>
-        <Pressable onPress={() => setProjectPickerOpen(true)} style={styles.selectField}>
-          <Text style={[styles.selectValue, !selectedProject && styles.selectPlaceholder]}>
-            {selectedProject ? selectedProject.name : "Choose a project"}
-          </Text>
-          <Ionicons name="chevron-down" size={18} color={colors.textSoft} />
-        </Pressable>
+      {/* ─── PROJECT & FIELD ─── */}
+      <View style={styles.card}>
+        <View style={styles.cardHeader}>
+          <View style={styles.cardIconWrap}>
+            <MaterialCommunityIcons name="sprout" size={16} color={colors.primaryDark} />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.cardTitle}>Project & Field</Text>
+            <Text style={styles.cardSubtitle}>CURRENT PROJECT</Text>
+          </View>
+        </View>
 
-        <View style={[styles.projectStatusCard, selectedProject ? styles.projectStatusSelected : styles.projectStatusEmpty]}>
-          <Text style={styles.projectStatusTitle}>{selectedProject ? selectedProject.name : "No project selected."}</Text>
-          <Text style={styles.projectStatusSubtitle}>
-            {selectedProject ? selectedProject.location_text || "Project selected" : "Please select a project to begin."}
-          </Text>
+        <View style={styles.projectPickerRow}>
+          <Pressable onPress={() => setProjectPickerOpen(true)} style={styles.projectDropdown}>
+            <Text style={[styles.projectDropdownText, !selectedProject && styles.projectDropdownPlaceholder]} numberOfLines={1}>
+              {selectedProject ? selectedProject.name : "Choose a project"}
+            </Text>
+            <Ionicons name="chevron-down" size={17} color={colors.textSoft} />
+          </Pressable>
+
+          {selectedProject ? (
+            <View style={styles.projectLocationChip}>
+              <Ionicons name="location" size={14} color={colors.primaryDark} />
+              <View style={{ flex: 1, minWidth: 0 }}>
+                <Text style={styles.projectLocationName} numberOfLines={1}>{selectedProject.name}</Text>
+                <Text style={styles.projectLocationSub} numberOfLines={1}>
+                  {selectedProject.location_text || "Project selected"}
+                </Text>
+              </View>
+            </View>
+          ) : null}
         </View>
 
         {!selectedProject ? (
-          <EmptyState title="No active project yet" subtitle="Select a project above before opening tasks, map capture, or tree records." />
+          <EmptyState
+            title="No active project yet"
+            subtitle={`Select a project above before opening tasks, ${workflowLabels.actionTitle.toLowerCase()}, or ${workflowLabels.recordsTitle.toLowerCase()}.`}
+          />
         ) : (
           <>
-            <View style={styles.statsGrid}>
-              <MetricTile label="Total Trees" value={scopedTrees.length} helper="Visible to current user" />
-              <MetricTile label="Healthy" value={healthyTrees} tone="success" helper="Healthy + alive" />
-            </View>
-            <View style={styles.statsGrid}>
-              <MetricTile label="Dead" value={deadTrees} tone="danger" helper="Dead + removed" />
-              <MetricTile label="Needs Attention" value={needsAttentionTrees} tone="attention" helper="Attention + damaged" />
-            </View>
-            <View style={styles.survivalCard}>
-              <Text style={styles.survivalLabel}>Survival Rate</Text>
-              <View style={styles.survivalGaugeWrap}>
-                <View style={styles.survivalGauge}>
-                  <Svg width={SURVIVAL_GAUGE_SIZE} height={SURVIVAL_GAUGE_SIZE} viewBox={`0 0 ${SURVIVAL_GAUGE_SIZE} ${SURVIVAL_GAUGE_SIZE}`}>
-                    <Circle
-                      cx={SURVIVAL_GAUGE_SIZE / 2}
-                      cy={SURVIVAL_GAUGE_SIZE / 2}
-                      r={SURVIVAL_GAUGE_RADIUS}
-                      stroke="#e8ece8"
-                      strokeWidth={SURVIVAL_GAUGE_STROKE}
-                      fill="none"
-                    />
-                    <Circle
-                      cx={SURVIVAL_GAUGE_SIZE / 2}
-                      cy={SURVIVAL_GAUGE_SIZE / 2}
-                      r={SURVIVAL_GAUGE_RADIUS}
-                      stroke={colors.primary}
-                      strokeWidth={SURVIVAL_GAUGE_STROKE}
-                      strokeLinecap="round"
-                      strokeDasharray={SURVIVAL_GAUGE_CIRCUMFERENCE}
-                      strokeDashoffset={SURVIVAL_GAUGE_CIRCUMFERENCE * (1 - survivalRate / 100)}
-                      fill="none"
-                      rotation={-90}
-                      origin={`${SURVIVAL_GAUGE_SIZE / 2}, ${SURVIVAL_GAUGE_SIZE / 2}`}
-                    />
-                  </Svg>
-                  <View style={styles.survivalGaugeCenter}>
-                    <Text style={styles.survivalValue}>{survivalRate}%</Text>
-                  </View>
+            {/* 4 metric tiles */}
+            <View style={styles.metricsRow}>
+              <View style={styles.metricBox}>
+                <View style={[styles.metricIcon, { backgroundColor: "rgba(42,168,82,0.13)" }]}>
+                  <MaterialCommunityIcons
+                    name={agricMode || reliefMode ? "vector-polygon" : "tree-outline"}
+                    size={17}
+                    color={colors.primaryDark}
+                  />
                 </View>
-                <View style={styles.survivalTextBlock}>
-                  <Text style={styles.survivalHeadline}>Overall Survival Rate</Text>
-                  <Text style={styles.survivalSubtext}>Based on current tree status</Text>
+                <Text style={styles.metricValue}>{scopedTrees.length}</Text>
+                <Text style={styles.metricLabel}>{workflowLabels.totalLabel}</Text>
+                <Text style={styles.metricHelper}>Visible to you</Text>
+              </View>
+
+              <View style={styles.metricBox}>
+                <View style={[styles.metricIcon, { backgroundColor: "rgba(42,168,82,0.13)" }]}>
+                  <MaterialCommunityIcons name="heart-outline" size={17} color={colors.primaryDark} />
+                </View>
+                <Text style={styles.metricValue}>{healthyTrees}</Text>
+                <Text style={styles.metricLabel}>{workflowLabels.healthyLabel}</Text>
+                <Text style={styles.metricHelper}>{workflowLabels.healthyHelper}</Text>
+              </View>
+
+              <View style={styles.metricBox}>
+                <View style={[styles.metricIcon, { backgroundColor: "rgba(217,119,6,0.13)" }]}>
+                  <MaterialCommunityIcons name="alert-outline" size={17} color="#d97706" />
+                </View>
+                <Text style={[styles.metricValue, needsAttentionTrees > 0 && styles.metricValueWarn]}>
+                  {needsAttentionTrees}
+                </Text>
+                <Text style={styles.metricLabel}>{workflowLabels.attentionLabel}</Text>
+                <Text style={styles.metricHelper}>{workflowLabels.attentionHelper}</Text>
+              </View>
+
+              <View style={styles.metricBox}>
+                <View style={[styles.metricIcon, { backgroundColor: "rgba(220,38,38,0.12)" }]}>
+                  <MaterialCommunityIcons name="close-circle-outline" size={17} color="#dc2626" />
+                </View>
+                <Text style={[styles.metricValue, deadTrees > 0 && styles.metricValueDanger]}>{deadTrees}</Text>
+                <Text style={styles.metricLabel}>{workflowLabels.deadLabel}</Text>
+                <Text style={styles.metricHelper}>{workflowLabels.deadHelper}</Text>
+              </View>
+            </View>
+
+            {/* Survival rate */}
+            <View style={styles.survivalCard}>
+              <View style={styles.survivalGaugeWrap}>
+                <Svg width={GAUGE_SIZE} height={GAUGE_SIZE} viewBox={`0 0 ${GAUGE_SIZE} ${GAUGE_SIZE}`}>
+                  <Circle
+                    cx={GAUGE_SIZE / 2} cy={GAUGE_SIZE / 2} r={GAUGE_RADIUS}
+                    stroke="#e2f0e4" strokeWidth={GAUGE_STROKE} fill="none"
+                  />
+                  <Circle
+                    cx={GAUGE_SIZE / 2} cy={GAUGE_SIZE / 2} r={GAUGE_RADIUS}
+                    stroke={colors.primary} strokeWidth={GAUGE_STROKE} strokeLinecap="round" fill="none"
+                    strokeDasharray={GAUGE_CIRCUMFERENCE}
+                    strokeDashoffset={gaugeDashOffset}
+                    rotation={-90}
+                    origin={`${GAUGE_SIZE / 2}, ${GAUGE_SIZE / 2}`}
+                  />
+                </Svg>
+                <View style={styles.survivalGaugeCenter}>
+                  <Text style={styles.survivalPct}>{survivalRate}%</Text>
+                </View>
+              </View>
+
+              <View style={styles.survivalTextBlock}>
+                <Text style={styles.survivalHeadline}>{agricMode ? "Overall Field Condition" : reliefMode ? "Overall Site Condition" : "Overall Survival Rate"}</Text>
+                <Text style={styles.survivalSubtext}>{agricMode ? "Based on current plot status" : reliefMode ? "Based on current site status" : "Based on current tree status"}</Text>
+              </View>
+
+              <View style={[styles.survivalBadge, { backgroundColor: survivalQuality.bg }]}>
+                <Ionicons name="trending-up" size={11} color={survivalQuality.color} />
+                <View style={{ alignItems: "center" }}>
+                  <Text style={[styles.survivalBadgeLabel, { color: survivalQuality.color }]}>
+                    {survivalQuality.label}
+                  </Text>
+                  <Text style={styles.survivalBadgeNote}>{survivalQuality.note}</Text>
                 </View>
               </View>
             </View>
@@ -379,85 +416,150 @@ export const GreenOverviewScreen = () => {
         )}
       </View>
 
-      <View style={styles.tileGrid}>
-        <ActionTile
-          title="Maintenance Tasks"
-          subtitle={undefined}
-          icon={<MaterialCommunityIcons name="clipboard-text-outline" size={26} color={colors.primaryDark} />}
-          badgeValue={isCustodianUser ? "-" : myTaskCounts.undone}
-          badgeTone={myTaskCounts.undone > 0 ? "warning" : "success"}
-          secondaryBadgeValue={myTaskCounts.rejected > 0 ? myTaskCounts.rejected : undefined}
-          secondaryBadgeTone="danger"
-          footerBadges={[
-            { label: `Submitted ${myTaskCounts.submitted}`, tone: "warning" },
-            { label: `Approved ${myTaskCounts.done}`, tone: "success" },
-          ]}
-          disabled={isCustodianUser || !selectedProject}
-          onPress={() => navigation.navigate("GreenTasks")}
-        />
-        <ActionTile
-          title="Map & Add Trees"
-          subtitle={undefined}
-          icon={<MaterialCommunityIcons name="map-marker-plus-outline" size={26} color={colors.primaryDark} />}
-          badgeValue={pendingPlanting}
-          badgeTone={pendingPlanting > 0 ? "warning" : "success"}
-          footerBadges={[
-            { label: `Submitted ${plantingReviewCounts.submitted}`, tone: "warning" },
-            { label: `Approved ${plantingReviewCounts.approved}`, tone: "success" },
-          ]}
-          disabled={!selectedProject}
-          onPress={() => navigation.navigate("GreenField")}
-        />
-        <ActionTile
-          title="Tree Records"
-          subtitle={undefined}
-          icon={<MaterialCommunityIcons name="tree-outline" size={26} color={colors.primaryDark} />}
-          badgeValue={scopedTrees.length}
-          disabled={!selectedProject}
-          onPress={() => navigation.navigate("GreenRecords")}
-        />
+      {/* ─── QUICK ACTIONS ─── */}
+      <View style={styles.sectionHeaderRow}>
+        <Text style={styles.sectionTitle}>Quick Actions</Text>
+        <View style={styles.sectionTitleLine} />
       </View>
 
-      {selectedProject ? (
-        <SectionCard
-          title="Carbon Impact Summary"
-          subtitle="Current, annual, and long-term modeled carbon values"
-        >
+      <View style={styles.tileGrid}>
+        <View style={styles.tileCell}>
+          <ActionTile
+            title={workflowLabels.activityTitle}
+            icon={<MaterialCommunityIcons name="clipboard-text-outline" size={26} color={colors.primaryDark} />}
+            badgeValue={isCustodianUser ? "-" : myTaskCounts.undone}
+            badgeTone={myTaskCounts.undone > 0 ? "warning" : "success"}
+            secondaryBadgeValue={myTaskCounts.review > 0 ? myTaskCounts.review : undefined}
+            secondaryBadgeTone="danger"
+            footerBadges={[
+              { label: `${myTaskCounts.submitted} Submitted`, tone: "warning" },
+              { label: `${myTaskCounts.done} Approved`, tone: "success" },
+            ]}
+            disabled={isCustodianUser || !selectedProject}
+            onPress={() => navigation.navigate("GreenTasks", { mode: "maintenance" })}
+          />
+        </View>
+        <View style={styles.tileCell}>
+          <ActionTile
+            title={workflowLabels.actionTitle}
+            icon={<MaterialCommunityIcons name="map-marker-plus-outline" size={26} color={colors.primaryDark} />}
+            badgeValue={pendingPlanting}
+            badgeTone={pendingPlanting > 0 ? "warning" : "success"}
+            footerBadges={[
+              { label: `${plantingReviewCounts.submitted} Submitted`, tone: "warning" },
+              { label: `${plantingReviewCounts.approved} Approved`, tone: "success" },
+            ]}
+            disabled={!selectedProject}
+            onPress={() => navigation.navigate("GreenField")}
+          />
+        </View>
+        <View style={styles.tileCell}>
+          <ActionTile
+            title="Review Fixes"
+            icon={<MaterialCommunityIcons name="file-document-edit-outline" size={26} color={colors.primaryDark} />}
+            badgeValue={isCustodianUser ? "-" : myTaskCounts.review}
+            badgeTone={myTaskCounts.review > 0 ? "warning" : "success"}
+            footerBadges={[
+              { label: `${myTaskCounts.metadataEdit} Metadata`, tone: "warning" },
+              { label: `${myTaskCounts.rejected} Rejected`, tone: "warning" },
+            ]}
+            disabled={isCustodianUser || !selectedProject}
+            onPress={() => navigation.navigate("GreenTasks", { mode: "review" })}
+          />
+        </View>
+        <View style={styles.tileCell}>
+          <ActionTile
+            title={workflowLabels.recordsTitle}
+            icon={
+              <MaterialCommunityIcons
+                name={agricMode || reliefMode ? "map-marker-path" : "tree-outline"}
+                size={26}
+                color={colors.primaryDark}
+              />
+            }
+            badgeValue={scopedTrees.length}
+            footerBadges={[{ label: `${scopedTrees.length} ${workflowLabels.entityPlural}`, tone: "success" }]}
+            disabled={!selectedProject}
+            onPress={() => navigation.navigate("GreenRecords")}
+          />
+        </View>
+      </View>
+
+      {/* ─── CARBON IMPACT ─── */}
+      {selectedProject && !agricMode && !reliefMode ? (
+        <LinearGradient colors={["#0f2d1a", "#1a5c36"]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.carbonCard}>
+          <View style={styles.carbonHeader}>
+            <View style={styles.carbonIconWrap}>
+              <MaterialCommunityIcons name="leaf" size={16} color="#9be3ae" />
+            </View>
+            <Text style={styles.carbonTitle}>Carbon Impact at a Glance</Text>
+          </View>
+
           {carbonSummary ? (
-            <>
-              <View style={styles.statsGrid}>
-                <MetricTile
-                  label="Current CO2"
-                  value={`${carbonSummary.current_co2_tonnes.toFixed(2)} t`}
-                  helper={`${carbonSummary.current_co2_kg.toFixed(2)} kg sequestered`}
-                />
-                <MetricTile
-                  label="Annual CO2"
-                  value={`${carbonSummary.annual_co2_tonnes.toFixed(2)} t`}
-                  helper={`${carbonSummary.annual_co2_kg.toFixed(2)} kg / yr`}
-                />
+            <View style={styles.carbonGrid}>
+              <View style={styles.carbonMetric}>
+                <Text style={styles.carbonMetricValue}>{carbonSummary.current_co2_tonnes.toFixed(2)} t</Text>
+                <Text style={styles.carbonMetricLabel}>Current CO2</Text>
+                <Text style={styles.carbonMetricSub}>{carbonSummary.current_co2_kg.toFixed(2)} kg sequestered</Text>
               </View>
-              <View style={styles.statsGrid}>
-                <MetricTile
-                  label="Projected 40y"
-                  value={`${carbonSummary.projected_lifetime_co2_tonnes.toFixed(2)} t`}
-                  tone="success"
-                  helper="Long-term modeled stock"
-                />
-                <MetricTile
-                  label="Per Tree"
-                  value={`${carbonSummary.co2_per_tree_avg_kg.toFixed(2)} kg`}
-                  helper={`${annualPerTreeKg.toFixed(2)} kg / tree / yr`}
-                />
+              <View style={styles.carbonMetric}>
+                <Text style={styles.carbonMetricValue}>{carbonSummary.annual_co2_tonnes.toFixed(2)} t</Text>
+                <Text style={styles.carbonMetricLabel}>Annual CO2</Text>
+                <Text style={styles.carbonMetricSub}>{carbonSummary.annual_co2_kg.toFixed(2)} kg/yr</Text>
               </View>
-            </>
+              <View style={styles.carbonMetric}>
+                <Text style={styles.carbonMetricValue}>{carbonSummary.projected_lifetime_co2_tonnes.toFixed(2)} t</Text>
+                <Text style={styles.carbonMetricLabel}>Projected 40y</Text>
+                <Text style={styles.carbonMetricSub}>Long-term stock</Text>
+              </View>
+              <View style={styles.carbonMetric}>
+                <Text style={styles.carbonMetricValue}>{carbonSummary.co2_per_tree_avg_kg.toFixed(2)} kg</Text>
+                <Text style={styles.carbonMetricLabel}>Per Tree</Text>
+                <Text style={styles.carbonMetricSub}>{annualPerTreeKg.toFixed(2)} kg/tree/yr</Text>
+              </View>
+            </View>
           ) : (
-            <EmptyState
-              title="Carbon impact not loaded"
-              subtitle={carbonError || (isOnline ? "Open the project online once to refresh carbon values." : "Reconnect once to refresh carbon impact for this project.")}
-            />
+            <Text style={styles.carbonUnavailable}>
+              {carbonError || (isOnline ? "Loading carbon values…" : "Connect once to load carbon data.")}
+            </Text>
           )}
-        </SectionCard>
+        </LinearGradient>
+      ) : null}
+
+      {/* ─── MOTIVATIONAL FOOTER ─── */}
+      {selectedProject ? (
+        <LinearGradient colors={["#0f5b2f", "#1f7d43", "#66be6d"]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.motivationalCard}>
+          <View style={styles.motivationalGlowPrimary} />
+          <View style={styles.motivationalGlowSecondary} />
+          <View style={styles.motivationalCopy}>
+            <View style={styles.motivationalHeaderRow}>
+              <View style={styles.motivationalIconWrap}>
+                <MaterialCommunityIcons name={agricMode || reliefMode ? "map-marker-path" : "leaf"} size={18} color="#ffffff" />
+              </View>
+              <View style={styles.motivationalTextWrap}>
+                <Text style={styles.motivationalEyebrow}>{impactEyebrow}</Text>
+                <Text style={styles.motivationalText}>
+                  <Text style={styles.motivationalBold}>{agricMode || reliefMode ? "Great work. " : "Great job. "}</Text>
+                  {workflowLabels.impactMessage}
+                </Text>
+              </View>
+            </View>
+            <View style={styles.motivationalChipRow}>
+              {impactChipLabels.map((label) => (
+                <View key={label} style={styles.motivationalChip}>
+                  <Text style={styles.motivationalChipText}>{label}</Text>
+                </View>
+              ))}
+            </View>
+          </View>
+          <Pressable style={styles.motivationalButton} onPress={() => navigation.navigate("GreenField")}>
+            <MaterialCommunityIcons
+              name={agricMode || reliefMode ? "map-marker-path" : "tree"}
+              size={20}
+              color={colors.inverseText}
+            />
+          </Pressable>
+        </LinearGradient>
       ) : null}
 
       <SelectSheet
@@ -475,19 +577,28 @@ export const GreenOverviewScreen = () => {
 const styles = StyleSheet.create({
   content: {
     paddingBottom: 124,
+    gap: 14,
   },
-  heroPanel: {
+
+  /* ─── HERO ─── */
+  hero: {
     borderRadius: radii.xl,
-    backgroundColor: colors.primary,
-    padding: 12,
+    padding: 14,
     gap: 10,
-    shadowColor: colors.shadow,
-    shadowOpacity: 0.24,
-    shadowRadius: 14,
-    shadowOffset: { width: 0, height: 7 },
-    elevation: 4,
+    shadowColor: "rgba(10,50,24,0.38)",
+    shadowOpacity: 1,
+    shadowRadius: 18,
+    shadowOffset: { width: 0, height: 8 },
+    elevation: 6,
   },
   heroBrandRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12,
+  },
+  heroBrandIdentity: {
+    flex: 1,
     flexDirection: "row",
     alignItems: "center",
     gap: 12,
@@ -509,118 +620,138 @@ const styles = StyleSheet.create({
     color: "#9be3ae",
   },
   heroSubtitle: {
-    color: "rgba(255,255,255,0.85)",
+    color: "rgba(255,255,255,0.78)",
     fontSize: 11,
     fontWeight: "600",
+  },
+  heroGreetingRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 7,
+  },
+  heroGreeting: {
+    color: "rgba(255,255,255,0.88)",
+    fontSize: 15,
+    fontWeight: "700",
+  },
+  heroGreetingName: {
+    color: colors.inverseText,
+    fontWeight: "900",
   },
   heroStatusRow: {
     flexDirection: "row",
     gap: 10,
     alignItems: "stretch",
   },
-  heroActionRow: {
+  heroOnlinePill: {
+    flex: 1,
     flexDirection: "row",
-    gap: spacing.sm,
-  },
-  heroStatusCard: {
-    flex: 0.78,
-    minWidth: 0,
+    alignItems: "center",
+    gap: 9,
     borderRadius: radii.lg,
     borderWidth: 1,
     borderColor: "rgba(255,255,255,0.18)",
     backgroundColor: "rgba(255,255,255,0.12)",
     paddingHorizontal: 12,
     paddingVertical: 8,
-    gap: 2,
-    justifyContent: "center",
   },
-  heroStatusLabel: {
+  heroOnlineDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+  },
+  heroOnlineLabel: {
     color: colors.inverseText,
-    fontSize: 11,
+    fontSize: 10,
     fontWeight: "900",
+    letterSpacing: 0.4,
   },
-  heroStatusValue: {
+  heroOnlineValue: {
     color: "rgba(255,255,255,0.88)",
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: "800",
   },
-  heroStatusBar: {
-    width: "100%",
-    height: 6,
-    borderRadius: radii.pill,
-    backgroundColor: "rgba(255,255,255,0.16)",
-    overflow: "hidden",
-    marginTop: 6,
-  },
-  heroStatusBarFill: {
-    height: "100%",
-    borderRadius: radii.pill,
-    backgroundColor: colors.inverseText,
-  },
   heroUserPill: {
-    flex: 1.22,
-    minWidth: 110,
-    maxWidth: 156,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 7,
     paddingHorizontal: 14,
     paddingVertical: 8,
     borderRadius: radii.pill,
     backgroundColor: "rgba(255,255,255,0.12)",
     borderWidth: 1,
     borderColor: "rgba(255,255,255,0.18)",
-    justifyContent: "center",
-    alignItems: "center",
+    maxWidth: 160,
   },
   heroUserText: {
     color: colors.inverseText,
-    fontSize: 11,
+    fontSize: 12,
     fontWeight: "800",
-    textAlign: "center",
+    flexShrink: 1,
   },
-  heroActionButton: {
-    flex: 1,
-    minHeight: 38,
-    borderRadius: radii.lg,
-    borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.18)",
-    backgroundColor: "rgba(255,255,255,0.12)",
-    alignItems: "center",
-    justifyContent: "center",
+  heroProgressBar: {
+    width: "100%",
+    height: 5,
+    borderRadius: radii.pill,
+    backgroundColor: "rgba(255,255,255,0.18)",
+    overflow: "hidden",
   },
-  heroActionButtonDisabled: {
-    opacity: 0.55,
+  heroProgressFill: {
+    height: "100%",
+    borderRadius: radii.pill,
+    backgroundColor: "#a3f0b0",
   },
-  heroActionText: {
-    color: colors.inverseText,
-    fontSize: 13,
-    fontWeight: "800",
-  },
-  setupCard: {
+
+  /* ─── SHARED CARD ─── */
+  card: {
     borderRadius: radii.xl,
     borderWidth: 1,
     borderColor: colors.border,
     backgroundColor: "#ffffff",
-    padding: 16,
-    gap: 12,
+    padding: spacing.md,
+    gap: 14,
     shadowColor: colors.shadow,
-    shadowOpacity: 0.08,
-    shadowRadius: 12,
+    shadowOpacity: 0.07,
+    shadowRadius: 14,
     shadowOffset: { width: 0, height: 5 },
     elevation: 2,
   },
-  setupTitle: {
+  cardHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+  },
+  cardIconWrap: {
+    width: 32,
+    height: 32,
+    borderRadius: 10,
+    backgroundColor: colors.primarySoft,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  cardTitle: {
     color: colors.text,
-    fontSize: 18,
+    fontSize: 16,
     fontWeight: "900",
+    lineHeight: 19,
   },
-  fieldLabel: {
-    color: colors.textSoft,
-    fontSize: 12,
-    fontWeight: "900",
+  cardSubtitle: {
+    color: colors.textMuted,
+    fontSize: 10,
+    fontWeight: "800",
+    letterSpacing: 0.6,
     textTransform: "uppercase",
-    letterSpacing: 0.5,
   },
-  selectField: {
-    minHeight: 48,
+
+  /* ─── PROJECT PICKER ─── */
+  projectPickerRow: {
+    flexDirection: "row",
+    gap: 10,
+    alignItems: "stretch",
+  },
+  projectDropdown: {
+    flex: 1,
+    minHeight: 46,
     borderRadius: radii.lg,
     borderWidth: 1,
     borderColor: colors.borderStrong,
@@ -629,69 +760,105 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    gap: spacing.sm,
+    gap: 8,
   },
-  selectValue: {
+  projectDropdownText: {
     flex: 1,
     color: colors.text,
-    fontSize: 15,
-    fontWeight: "600",
+    fontSize: 14,
+    fontWeight: "700",
   },
-  selectPlaceholder: {
+  projectDropdownPlaceholder: {
     color: colors.textMuted,
+    fontWeight: "500",
   },
-  projectStatusCard: {
+  projectLocationChip: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
     borderRadius: radii.lg,
     borderWidth: 1,
-    padding: 12,
-    gap: 4,
-  },
-  projectStatusSelected: {
-    backgroundColor: colors.primarySoft,
     borderColor: colors.borderStrong,
+    backgroundColor: colors.primarySoft,
+    maxWidth: 130,
   },
-  projectStatusEmpty: {
-    backgroundColor: colors.panelSoft,
-    borderColor: colors.border,
-  },
-  projectStatusTitle: {
-    color: colors.text,
-    fontSize: 15,
+  projectLocationName: {
+    color: colors.primaryDark,
+    fontSize: 11,
     fontWeight: "900",
   },
-  projectStatusSubtitle: {
+  projectLocationSub: {
     color: colors.textSoft,
-    fontSize: 12,
-    lineHeight: 17,
+    fontSize: 10,
+    lineHeight: 13,
   },
-  statsGrid: {
+
+  /* ─── METRIC TILES ─── */
+  metricsRow: {
     flexDirection: "row",
-    gap: spacing.sm,
+    gap: 8,
   },
-  survivalCard: {
-    borderTopWidth: 1,
-    borderTopColor: colors.divider,
-    paddingTop: 12,
-    gap: 10,
+  metricBox: {
+    flex: 1,
+    borderRadius: radii.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.panelSoft,
+    padding: 10,
+    gap: 4,
+    alignItems: "flex-start",
   },
-  survivalLabel: {
-    color: colors.textSoft,
-    fontSize: 12,
+  metricIcon: {
+    width: 30,
+    height: 30,
+    borderRadius: 9,
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 2,
+  },
+  metricValue: {
+    color: colors.text,
+    fontSize: 20,
     fontWeight: "900",
-    textTransform: "uppercase",
-    letterSpacing: 0.5,
+    lineHeight: 24,
   },
-  survivalGaugeWrap: {
-    width: "100%",
+  metricValueWarn: {
+    color: "#c05b00",
+  },
+  metricValueDanger: {
+    color: "#b91c1c",
+  },
+  metricLabel: {
+    color: colors.textSoft,
+    fontSize: 10,
+    fontWeight: "800",
+    lineHeight: 13,
+  },
+  metricHelper: {
+    color: colors.textMuted,
+    fontSize: 9,
+    lineHeight: 12,
+  },
+
+  /* ─── SURVIVAL RATE ─── */
+  survivalCard: {
     flexDirection: "row",
     alignItems: "center",
     gap: 12,
+    borderRadius: radii.lg,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.panelSoft,
+    padding: 14,
   },
-  survivalGauge: {
-    width: SURVIVAL_GAUGE_SIZE,
-    height: SURVIVAL_GAUGE_SIZE,
+  survivalGaugeWrap: {
+    width: GAUGE_SIZE,
+    height: GAUGE_SIZE,
     alignItems: "center",
     justifyContent: "center",
+    flexShrink: 0,
   },
   survivalGaugeCenter: {
     position: "absolute",
@@ -699,18 +866,18 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  survivalValue: {
+  survivalPct: {
     color: colors.text,
-    fontSize: 16,
+    fontSize: 15,
     fontWeight: "900",
   },
   survivalTextBlock: {
     flex: 1,
-    gap: 2,
+    gap: 3,
   },
   survivalHeadline: {
     color: colors.text,
-    fontSize: 15,
+    fontSize: 14,
     fontWeight: "900",
   },
   survivalSubtext: {
@@ -718,8 +885,221 @@ const styles = StyleSheet.create({
     fontSize: 11,
     lineHeight: 15,
   },
+  survivalBadge: {
+    borderRadius: radii.lg,
+    paddingHorizontal: 9,
+    paddingVertical: 8,
+    alignItems: "center",
+    gap: 3,
+    flexShrink: 0,
+  },
+  survivalBadgeLabel: {
+    fontSize: 10,
+    fontWeight: "900",
+    textAlign: "center",
+  },
+  survivalBadgeNote: {
+    color: colors.textMuted,
+    fontSize: 9,
+    textAlign: "center",
+  },
+
+  /* ─── SECTION HEADER ─── */
+  sectionHeaderRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+  },
+  sectionTitle: {
+    color: colors.text,
+    fontSize: 17,
+    fontWeight: "900",
+    flexShrink: 0,
+  },
+  sectionTitleLine: {
+    flex: 1,
+    height: 1,
+    backgroundColor: colors.divider,
+  },
+
+  /* ─── TILE GRID ─── */
   tileGrid: {
     flexDirection: "row",
+    flexWrap: "wrap",
+    marginHorizontal: -5,
+  },
+  tileCell: {
+    width: "50%",
+    paddingHorizontal: 5,
+    marginBottom: 10,
+  },
+
+  /* ─── CARBON CARD ─── */
+  carbonCard: {
+    borderRadius: radii.xl,
+    padding: spacing.md,
+    gap: 14,
+    shadowColor: "rgba(10,40,20,0.42)",
+    shadowOpacity: 1,
+    shadowRadius: 18,
+    shadowOffset: { width: 0, height: 8 },
+    elevation: 6,
+  },
+  carbonHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+  },
+  carbonIconWrap: {
+    width: 30,
+    height: 30,
+    borderRadius: 9,
+    backgroundColor: "rgba(163,240,176,0.18)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  carbonTitle: {
+    color: colors.inverseText,
+    fontSize: 15,
+    fontWeight: "900",
+    flex: 1,
+  },
+  carbonGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 10,
+  },
+  carbonMetric: {
+    width: "47%",
+    gap: 2,
+  },
+  carbonMetricValue: {
+    color: "#a3f0b0",
+    fontSize: 20,
+    fontWeight: "900",
+  },
+  carbonMetricLabel: {
+    color: "rgba(255,255,255,0.88)",
+    fontSize: 12,
+    fontWeight: "800",
+  },
+  carbonMetricSub: {
+    color: "rgba(255,255,255,0.52)",
+    fontSize: 10,
+    lineHeight: 14,
+  },
+  carbonUnavailable: {
+    color: "rgba(255,255,255,0.6)",
+    fontSize: 13,
+    lineHeight: 19,
+    fontStyle: "italic",
+  },
+
+  /* ─── MOTIVATIONAL ─── */
+  motivationalCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    borderRadius: radii.xl,
+    padding: spacing.md,
+    overflow: "hidden",
+    shadowColor: colors.shadow,
+    shadowOpacity: 0.16,
+    shadowRadius: 18,
+    shadowOffset: { width: 0, height: 10 },
+    elevation: 5,
+  },
+  motivationalGlowPrimary: {
+    position: "absolute",
+    width: 180,
+    height: 180,
+    borderRadius: 999,
+    backgroundColor: "rgba(255,255,255,0.14)",
+    right: -28,
+    top: -30,
+  },
+  motivationalGlowSecondary: {
+    position: "absolute",
+    width: 120,
+    height: 120,
+    borderRadius: 999,
+    backgroundColor: "rgba(255,255,255,0.1)",
+    left: -22,
+    bottom: -28,
+  },
+  motivationalCopy: {
+    flex: 1,
+    gap: 10,
+  },
+  motivationalHeaderRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+  },
+  motivationalIconWrap: {
+    width: 38,
+    height: 38,
+    borderRadius: 12,
+    backgroundColor: "rgba(255,255,255,0.18)",
+    alignItems: "center",
+    justifyContent: "center",
+    flexShrink: 0,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.16)",
+  },
+  motivationalTextWrap: {
+    flex: 1,
+    gap: 4,
+  },
+  motivationalEyebrow: {
+    color: "rgba(255,255,255,0.82)",
+    fontSize: 11,
+    fontWeight: "800",
+    letterSpacing: 0.7,
+    textTransform: "uppercase",
+  },
+  motivationalText: {
+    color: "#ffffff",
+    fontSize: 14,
+    lineHeight: 21,
+    fontWeight: "600",
+  },
+  motivationalBold: {
+    color: "#ffffff",
+    fontWeight: "900",
+  },
+  motivationalChipRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
     gap: 8,
+  },
+  motivationalChip: {
+    borderRadius: radii.pill,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    backgroundColor: "rgba(255,255,255,0.14)",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.18)",
+  },
+  motivationalChipText: {
+    color: "#ffffff",
+    fontSize: 11,
+    fontWeight: "800",
+  },
+  motivationalButton: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    backgroundColor: "rgba(9,33,16,0.24)",
+    alignItems: "center",
+    justifyContent: "center",
+    flexShrink: 0,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.18)",
+    shadowColor: "rgba(9,33,16,0.32)",
+    shadowOpacity: 1,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 4,
   },
 });

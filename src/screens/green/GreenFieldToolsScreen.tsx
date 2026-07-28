@@ -4,8 +4,8 @@ import * as ImagePicker from "expo-image-picker";
 import * as Location from "expo-location";
 import { useNavigation } from "@react-navigation/native";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { ActivityIndicator, Alert, Image, Linking, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
-import { fetchSponsorAgentQrUnits, fetchTreePhotoDataUri, fetchTreeTimeline } from "../../api/green";
+import { ActivityIndicator, Alert, Linking, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import { buildSponsorAgentQrSheetUrl, fetchSponsorAgentQrUnits, fetchTreePhotoDataUri, fetchTreeTimeline } from "../../api/green";
 import { getErrorMessage } from "../../api/client";
 import { EmptyState } from "../../components/EmptyState";
 import { DateField } from "../../components/DateField";
@@ -87,6 +87,9 @@ const buildAgentQrDownloadQuery = (user?: { id?: number | null; organization_id?
   const organizationId = Number(user?.organization_id || 0);
   if (userId > 0) pairs.push(`user_id=${encodeURIComponent(String(userId))}`);
   if (organizationId > 0) pairs.push(`organization_id=${encodeURIComponent(String(organizationId))}`);
+  // Cache-bust: without this, some Android browsers/PDF viewers reopen a previously
+  // downloaded copy for what looks like the same URL instead of fetching a fresh one.
+  pairs.push(`_ts=${Date.now()}`);
   return pairs.join("&");
 };
 
@@ -226,6 +229,8 @@ export const GreenFieldToolsScreen = () => {
   const [selectedCustodianId, setSelectedCustodianId] = useState("");
   const [fieldViewTab, setFieldViewTab] = useState<"map" | "add_tree">("map");
   const [custodianPickerOpen, setCustodianPickerOpen] = useState(false);
+  const [lockedCaptureTaskId, setLockedCaptureTaskId] = useState<number | null>(null);
+  const [lockedCaptureFarmerName, setLockedCaptureFarmerName] = useState<string | null>(null);
   const [areaPickerOpen, setAreaPickerOpen] = useState(false);
   const [treeOriginPickerOpen, setTreeOriginPickerOpen] = useState(false);
   const [statusPickerOpen, setStatusPickerOpen] = useState(false);
@@ -413,15 +418,26 @@ export const GreenFieldToolsScreen = () => {
   }, [loadSponsorQrUnits]);
 
   const sponsorPlantingRestricted = publicSponsorshipProject && !fieldWorkflowMode && treeOrigin !== "existing_inventory";
+  const sponsorQrLookupRecoverable =
+    sponsorPlantingRestricted &&
+    !sponsorQrUnitsLoading &&
+    Boolean(sponsorQrUnitsError) &&
+    activePlantingOrders.length > 0;
   const sponsorAssignmentRequiredMessage = sponsorPlantingRestricted
     ? sponsorQrUnitsLoading
       ? "Checking your sponsor-funded planting assignment..."
-      : sponsorQrUnitsError
+      : sponsorQrUnits.length > 0
+        ? ""
+        : sponsorQrUnitsError && !sponsorQrLookupRecoverable
         ? "Sponsor assignment could not be confirmed yet. Refresh this page or reconnect, then try again."
         : sponsorQrUnits.length === 0
           ? "No sponsor-funded tree is currently assigned to you in this project yet. Ask your supervisor to assign sponsor QR tags before planting."
           : ""
     : "";
+  const sponsorAssignmentWarningMessage =
+    sponsorPlantingRestricted && sponsorQrLookupRecoverable
+      ? "Sponsor QR tags could not be refreshed just now. If this planting order was already assigned to you, you can continue and the server will confirm the reservation when you save."
+      : "";
 
   const activeOrderSpeciesAllocations = useMemo(() => {
     const merged = new Map<string, { species: string; count: number }>();
@@ -662,9 +678,14 @@ export const GreenFieldToolsScreen = () => {
       })
       .map((task) => {
         const taskTree = treeById.get(Number(task.tree_id));
-        const ownerName =
-          String(task.custodian_name || taskTree?.custodian_name || "").trim() || `Unlinked ${workflowLabels.ownerLabel.toLowerCase()}`;
-        const ownerId = Number(taskTree?.custodian_id || 0);
+        const custodianNameFromTask = String(task.custodian_name || taskTree?.custodian_name || "").trim();
+        const ownerName = custodianNameFromTask || `Unlinked ${workflowLabels.ownerLabel.toLowerCase()}`;
+        let ownerId = Number(taskTree?.custodian_id || 0);
+        // Resolve custodian id by name when the placeholder tree is not yet cached locally
+        if (ownerId === 0 && custodianNameFromTask) {
+          const found = custodians.find((c) => normalizeName(c.name) === normalizeName(custodianNameFromTask));
+          if (found) ownerId = Number(found.id);
+        }
         return {
           task,
           ownerName,
@@ -672,13 +693,13 @@ export const GreenFieldToolsScreen = () => {
           dueDate: task.due_date || null,
         };
       })
-      .filter((row) => row.ownerId > 0)
+      .filter((row) => row.ownerId > 0 || String(row.task.custodian_name || "").trim().length > 0)
       .sort((a, b) => {
         const aDue = a.dueDate ? new Date(a.dueDate).getTime() : Number.MAX_SAFE_INTEGER;
         const bDue = b.dueDate ? new Date(b.dueDate).getTime() : Number.MAX_SAFE_INTEGER;
         return aDue - bDue;
       });
-  }, [fieldWorkflowMode, tasks, trees, workflowLabels.ownerLabel]);
+  }, [custodians, fieldWorkflowMode, tasks, trees, workflowLabels.ownerLabel]);
 
   const treeStatusOptions = treeOrigin === "existing_inventory" ? EXISTING_TREE_STATUS_OPTIONS : NEW_TREE_STATUS_OPTIONS;
 
@@ -1113,6 +1134,8 @@ export const GreenFieldToolsScreen = () => {
     setUseAssignedArea(false);
     setSelectedAreaOrderId("");
     setSelectedCustodianId("");
+    setLockedCaptureTaskId(null);
+    setLockedCaptureFarmerName(null);
     setFieldErrors({});
     setGpsSource(null);
   };
@@ -1230,7 +1253,9 @@ export const GreenFieldToolsScreen = () => {
   };
 
   const applyFieldCaptureAssignment = (ownerId: number, ownerName: string, taskId: number) => {
-    setSelectedCustodianId(String(ownerId));
+    setSelectedCustodianId(ownerId > 0 ? String(ownerId) : "");
+    setLockedCaptureTaskId(taskId);
+    setLockedCaptureFarmerName(ownerName);
     setSelectedTreeId(null);
     setIsAdjustingTree(false);
     setTreeDraftLocation(null);
@@ -1744,8 +1769,9 @@ export const GreenFieldToolsScreen = () => {
           <View style={styles.sponsorQrBanner}>
             <Text style={styles.sponsorQrBannerTitle}>Sponsor QR Tags</Text>
             <Text style={styles.sponsorQrBannerText}>
-              Download one reserved QR tag for each sponsor-funded tree before going to field. After planting,
-              attach the matching tag and submit the tree for supervisor review.
+              Download one printable QR sheet for all sponsor-funded trees assigned to you. Each A4 sheet is grouped
+              into small tag cards so you can print once, cut them, attach them after planting, and submit the trees
+              for supervisor review.
             </Text>
             {sponsorQrUnitsLoading ? (
               <Text style={styles.sponsorQrBannerMeta}>Loading reserved sponsor tags...</Text>
@@ -1761,7 +1787,25 @@ export const GreenFieldToolsScreen = () => {
               </View>
             ) : (
               <View style={styles.sponsorQrList}>
-                <Text style={styles.sponsorQrBannerMeta}>{sponsorQrUnits.length} QR tag{sponsorQrUnits.length === 1 ? "" : "s"} ready — print before going to field</Text>
+                <Text style={styles.sponsorQrBannerMeta}>
+                  {sponsorQrUnits.length} sponsor QR tag{sponsorQrUnits.length === 1 ? "" : "s"} ready — the download below
+                  will group them into A4 sheets before fieldwork.
+                </Text>
+                <PrimaryButton
+                  label={`Download QR Sheet${sponsorQrUnits.length === 1 ? "" : ` (${sponsorQrUnits.length} tags)`}`}
+                  onPress={() => {
+                    if (!activeProject || !session?.user?.id) return;
+                    const baseUrl = buildSponsorAgentQrSheetUrl(
+                      Number(activeProject.id),
+                      Number(session.user.id || 0),
+                      session.user.organization_id ?? null,
+                    );
+                    Linking.openURL(baseUrl).catch(() => {
+                      Alert.alert("Error", "Failed to open sponsor QR sheet PDF. Check your internet connection and try again.");
+                    });
+                  }}
+                  variant="secondary"
+                />
                 {sponsorQrUnits.map((unit) => (
                   <View key={`sponsor-qr-${unit.unit_id}`} style={styles.sponsorQrCard}>
                     <View style={styles.sponsorQrCardHead}>
@@ -1789,16 +1833,6 @@ export const GreenFieldToolsScreen = () => {
                         {unit.last_qr_downloaded_by ? ` | ${unit.last_qr_downloaded_by}` : ""}
                       </Text>
                     ) : null}
-                    <PrimaryButton
-                      label="Print QR Tag"
-                      onPress={() => {
-                        const url = appendDownloadQuery(`${API_URL}/green/sponsorship-units/${unit.unit_id}/qr-tag/pdf`, qrDownloadQuery);
-                        Linking.openURL(url).catch(() => {
-                          Alert.alert("Error", "Failed to open sponsor QR tag PDF. Check your internet connection and try again.");
-                        });
-                      }}
-                      variant="secondary"
-                    />
                   </View>
                 ))}
                 <PrimaryButton label="Refresh QR Tags" onPress={loadSponsorQrUnits} variant="secondary" />
@@ -1807,22 +1841,26 @@ export const GreenFieldToolsScreen = () => {
           </View>
         ) : null}
 
-        {showingAddTreeTab && pendingFieldCaptureTasks.length > 0 ? (
+        {pendingFieldCaptureTasks.length > 0 ? (
           <View style={styles.fieldCaptureBanner}>
             <Text style={styles.fieldCaptureBannerTitle}>{reliefMode ? "Assigned first site capture" : "Assigned first field capture"}</Text>
             <Text style={styles.fieldCaptureBannerText}>
-              {reliefMode ? "These beneficiary assignments open here instead of Relief Visits. Select one, map the site boundary, and save the first site record." : "These farmer assignments open here instead of Field Visits. Select one, map the farm boundary, and save the first plot."}
+              {reliefMode ? "These beneficiary assignments open here instead of Relief Visits. Select one, map the site boundary, and save the first site record." : "These farmer assignments open here. Select one, draw the farm boundary, add GPS and photo evidence, then save."}
             </Text>
             <View style={styles.fieldCaptureChipRow}>
               {pendingFieldCaptureTasks.map((item) => (
                 <Pressable
                   key={`field-capture-${item.task.id}`}
                   onPress={() => applyFieldCaptureAssignment(item.ownerId, item.ownerName, item.task.id)}
-                  style={styles.fieldCaptureChip}
+                  style={[
+                    styles.fieldCaptureChip,
+                    lockedCaptureTaskId === item.task.id && styles.fieldCaptureChipActive,
+                  ]}
                 >
                   <Text style={styles.fieldCaptureChipLabel}>{item.ownerName}</Text>
                   <Text style={styles.fieldCaptureChipMeta}>
                     {`Task #${item.task.id}`}{item.dueDate ? ` | Due ${formatDate(item.dueDate)}` : " | Capture pending"}
+                    {lockedCaptureTaskId === item.task.id ? " | Selected" : ""}
                   </Text>
                 </Pressable>
               ))}
@@ -2425,10 +2463,17 @@ export const GreenFieldToolsScreen = () => {
         {treeOrigin === "existing_inventory" && !isCustodianUser ? (
           <>
             <Text style={styles.fieldLabel}>{workflowLabels.ownerLabel}{fieldWorkflowMode ? <Text style={styles.requiredAsterisk}> *</Text> : null}</Text>
-            <Pressable onPress={() => setCustodianPickerOpen(true)} style={[styles.selectField, fieldErrors.custodian && styles.inputError]}>
-              <Text style={styles.selectValue}>{effectiveCustodianId ? custodians.find((custodian) => custodian.id === effectiveCustodianId)?.name || `Selected ${workflowLabels.ownerLabel.toLowerCase()}` : `No ${workflowLabels.ownerLabel.toLowerCase()}`}</Text>
-              <Ionicons name="chevron-down" size={18} color={colors.textSoft} />
-            </Pressable>
+            {lockedCaptureFarmerName ? (
+              <View style={[styles.selectField, { opacity: 0.85 }]}>
+                <Text style={styles.selectValue}>{lockedCaptureFarmerName}</Text>
+                <Ionicons name="lock-closed" size={14} color={colors.textSoft} />
+              </View>
+            ) : (
+              <Pressable onPress={() => setCustodianPickerOpen(true)} style={[styles.selectField, fieldErrors.custodian && styles.inputError]}>
+                <Text style={styles.selectValue}>{effectiveCustodianId ? custodians.find((custodian) => custodian.id === effectiveCustodianId)?.name || `Selected ${workflowLabels.ownerLabel.toLowerCase()}` : `No ${workflowLabels.ownerLabel.toLowerCase()}`}</Text>
+                <Ionicons name="chevron-down" size={18} color={colors.textSoft} />
+              </Pressable>
+            )}
             <FieldError message={fieldErrors.custodian} />
           </>
         ) : null}
@@ -2457,13 +2502,14 @@ export const GreenFieldToolsScreen = () => {
           <View style={styles.photoGrid}>
             {photos.map((photo) => (
               <Pressable key={photo.uri} onPress={() => setPhotos((prev) => prev.filter((item) => item.uri !== photo.uri))} style={styles.photoWrap}>
-                <Image source={{ uri: photo.uri }} style={styles.photo} />
+                <ExpoImage source={{ uri: photo.uri }} contentFit="cover" style={styles.photo} />
                 <View style={styles.photoTag}><Text style={styles.photoTagText}>Remove</Text></View>
               </Pressable>
             ))}
           </View>
         ) : null}
         {message && message !== sponsorAssignmentRequiredMessage ? <Text style={styles.note}>{message}</Text> : null}
+        {sponsorAssignmentWarningMessage ? <Text style={styles.note}>{sponsorAssignmentWarningMessage}</Text> : null}
         {sponsorAssignmentRequiredMessage ? <Text style={styles.fieldError}>{sponsorAssignmentRequiredMessage}</Text> : null}
         <PrimaryButton
           label={
@@ -3149,6 +3195,10 @@ const styles = StyleSheet.create({
     color: colors.textMuted,
     fontSize: 11,
     lineHeight: 16,
+  },
+  fieldCaptureChipActive: {
+    borderColor: colors.primaryDark,
+    backgroundColor: "#f0fdf4",
   },
   mapSheetWrap: {
     position: "relative",

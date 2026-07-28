@@ -36,6 +36,9 @@ const buildAgentQrDownloadQuery = (user?: { id?: number | null; organization_id?
   const organizationId = Number(user?.organization_id || 0);
   if (userId > 0) pairs.push(`user_id=${encodeURIComponent(String(userId))}`);
   if (organizationId > 0) pairs.push(`organization_id=${encodeURIComponent(String(organizationId))}`);
+  // Cache-bust: without this, some Android browsers/PDF viewers reopen a previously
+  // downloaded copy for what looks like the same URL instead of fetching a fresh one.
+  pairs.push(`_ts=${Date.now()}`);
   return pairs.join("&");
 };
 

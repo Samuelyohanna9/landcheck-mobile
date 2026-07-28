@@ -2,9 +2,11 @@ import * as SQLite from "expo-sqlite";
 import type { SQLiteDatabase } from "expo-sqlite";
 import type {
   AppMode,
+  CarbonSummary,
   CustodianSummary,
   DistributionAllocationSummary,
   OfflineStats,
+  ProjectDetailSummary,
   ProjectSummary,
   QueueActionType,
   ReviewQueueItem,
@@ -178,6 +180,14 @@ export const bootstrapLocalDatabase = async () => {
       synced_at TEXT NOT NULL,
       UNIQUE(app_mode, tree_id)
     );
+    CREATE TABLE IF NOT EXISTS cached_project_details (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      app_mode TEXT NOT NULL,
+      project_id INTEGER NOT NULL,
+      payload TEXT NOT NULL,
+      synced_at TEXT NOT NULL,
+      UNIQUE(app_mode, project_id)
+    );
   `);
 
   await alterIfNeeded(db, "ALTER TABLE sync_queue ADD COLUMN project_id INTEGER");
@@ -211,6 +221,34 @@ export const readCachedProjects = async (appMode: AppMode) => {
   return rows
     .map((row) => parsePayload<ProjectSummary>(row.payload))
     .filter((item): item is ProjectSummary => Boolean(item));
+};
+
+const normalizeProjectDetailPayload = (detail: ProjectDetailSummary): ProjectDetailSummary => ({
+  ...detail,
+  carbon: detail?.carbon
+    ? ({
+        ...detail.carbon,
+        project_id: Number(detail.carbon.project_id || detail.id || 0) || null,
+      } satisfies CarbonSummary)
+    : null,
+});
+
+export const cacheProjectDetail = async (appMode: AppMode, projectId: number, detail: ProjectDetailSummary) => {
+  await runSerializedWrite(async (db) => {
+    await db.runAsync(
+      "INSERT OR REPLACE INTO cached_project_details (app_mode, project_id, payload, synced_at) VALUES (?, ?, ?, ?)",
+      [appMode, projectId, JSON.stringify(normalizeProjectDetailPayload(detail)), new Date().toISOString()],
+    );
+  });
+};
+
+export const readCachedProjectDetail = async (appMode: AppMode, projectId: number) => {
+  const db = await getDatabase();
+  const row = await db.getFirstAsync<{ payload: string }>(
+    "SELECT payload FROM cached_project_details WHERE app_mode = ? AND project_id = ?",
+    [appMode, projectId],
+  );
+  return row ? parsePayload<ProjectDetailSummary>(row.payload) : null;
 };
 
 const normalizeTaskPayload = (task: TaskSummary | ReviewQueueItem) => JSON.stringify(normalizeTaskSummary(task as TaskSummary));

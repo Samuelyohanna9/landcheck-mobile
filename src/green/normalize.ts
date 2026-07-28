@@ -8,6 +8,12 @@ const parseJsonMaybe = (value: string) => {
   }
 };
 
+const normalizeJsonObject = <T = Record<string, unknown>>(value: unknown): T | null => {
+  if (!value) return null;
+  const source = typeof value === "string" ? parseJsonMaybe(value) : value;
+  return source && typeof source === "object" && !Array.isArray(source) ? (source as T) : null;
+};
+
 export const normalizePhotoList = (value: unknown): string[] => {
   const source = typeof value === "string" ? parseJsonMaybe(value) ?? value : value;
   const rows = Array.isArray(source) ? source : typeof source === "string" && source.trim() ? [source] : [];
@@ -80,6 +86,7 @@ export const normalizeTreeSummary = (tree: TreeSummary): TreeSummary => {
     photo_url: photoUrl || null,
     photo_urls: photoUrls,
     existing_area_geojson: normalizeMapGeometry(tree.existing_area_geojson),
+    record_profile_data: normalizeJsonObject(tree.record_profile_data),
   };
 };
 

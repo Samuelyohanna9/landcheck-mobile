@@ -4,7 +4,7 @@ import * as Notifications from "expo-notifications";
 import { Platform } from "react-native";
 import { deactivateGreenSponsorMobilePushToken, registerGreenSponsorMobilePushToken } from "../api/sponsor";
 import type { MobileSession } from "../types/domain";
-import { requestGreenNotificationPermission } from "./greenNotifications";
+import { requestGreenNotificationPermission, supportsNativeNotifications } from "./greenNotifications";
 
 const SPONSOR_PUSH_TOKEN_STORAGE_KEY = "sponsor:expo-push-token";
 
@@ -57,6 +57,7 @@ const getExpoPushTokenValue = async () => {
 export const syncSponsorPushRegistration = async (session: MobileSession | null) => {
   if (!session || session.user.id <= 0) return null;
   if (Platform.OS !== "android" && Platform.OS !== "ios") return null;
+  if (!supportsNativeNotifications()) return null;
   const allowed = await requestGreenNotificationPermission();
   if (!allowed) return null;
 
@@ -85,6 +86,10 @@ export const syncSponsorPushRegistration = async (session: MobileSession | null)
 };
 
 export const clearSponsorPushRegistration = async (session: MobileSession | null) => {
+  if (!supportsNativeNotifications()) {
+    await writeStoredToken(null);
+    return;
+  }
   const previous = await readStoredToken();
   if (previous?.token) {
     try {
