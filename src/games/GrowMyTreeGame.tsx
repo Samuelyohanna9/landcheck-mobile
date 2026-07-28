@@ -665,7 +665,7 @@ const s = StyleSheet.create({
   puTxt2: { fontSize: 13, fontWeight: "700", color: "#b45309", textAlign: "center" },
   tip: { fontSize: 12, color: "#35564a", textAlign: "center", lineHeight: 18 },
   pressed: { opacity: 0.85, transform: [{ scale: 0.97 }] },
-  overlay: { ...StyleSheet.absoluteFillObject, backgroundColor: "rgba(0,0,0,0.55)", justifyContent: "center", alignItems: "center", zIndex: 100 },
+  overlay: { ...StyleSheet.absoluteFill, backgroundColor: "rgba(0,0,0,0.55)", justifyContent: "center", alignItems: "center", zIndex: 100 },
   modal: { backgroundColor: "#fff", borderRadius: 20, padding: 24, width: "82%", gap: 14, alignItems: "center" },
   modalTitle: { fontSize: 17, fontWeight: "900", color: "#1a3328", textAlign: "center" },
   input: { borderWidth: 1.5, borderColor: "#d1fae5", borderRadius: 12, paddingHorizontal: 14, paddingVertical: 12, fontSize: 15, color: "#1a3328", width: "100%" },

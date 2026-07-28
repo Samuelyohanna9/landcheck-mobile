@@ -17,11 +17,6 @@ const config: ExpoConfig = {
   scheme: "landcheckmobile",
   orientation: "default",
   icon: "./assets/green-logo-cropped-760.png",
-  splash: {
-    image: "./assets/green-logo-cropped-760.png",
-    resizeMode: "contain",
-    backgroundColor: "#ffffff",
-  },
   ios: {
     supportsTablet: true,
     bundleIdentifier: "online.landcheck.mobile",
@@ -33,6 +28,7 @@ const config: ExpoConfig = {
   android: {
     package: "online.landcheck.mobile",
     versionCode: 44,
+    googleServicesFile: "./google-services.json",
     permissions: ["ACCESS_COARSE_LOCATION", "ACCESS_FINE_LOCATION", "CAMERA"],
     adaptiveIcon: {
       backgroundColor: "#ffffff",
@@ -82,6 +78,15 @@ const config: ExpoConfig = {
     ],
     "expo-background-task",
     "expo-image",
+    "expo-status-bar",
+    [
+      "expo-splash-screen",
+      {
+        image: "./assets/green-logo-cropped-760.png",
+        resizeMode: "contain",
+        backgroundColor: "#ffffff",
+      },
+    ],
     "react-native-edge-to-edge",
     withPlayStoreSafePermissions,
   ] as NonNullable<ExpoConfig["plugins"]>,

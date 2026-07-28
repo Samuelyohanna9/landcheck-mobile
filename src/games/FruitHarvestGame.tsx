@@ -750,7 +750,7 @@ const styles = StyleSheet.create({
   },
   fruitHint: { fontSize: 8, fontWeight: "800", color: "#35564a", marginTop: -3 },
   overlay: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     backgroundColor: "rgba(255,248,235,0.78)",
     alignItems: "center",
     justifyContent: "center",

@@ -3041,7 +3041,7 @@ const styles = StyleSheet.create({
   helpText: { color: colors.textMuted, fontSize: 12, lineHeight: 17, fontStyle: "italic" },
   meta: { color: colors.textMuted, fontSize: 12, lineHeight: 18 },
   plantingOverlay: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     backgroundColor: "rgba(13, 29, 19, 0.18)",
     alignItems: "center",
     justifyContent: "center",

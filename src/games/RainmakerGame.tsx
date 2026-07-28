@@ -398,7 +398,7 @@ const s = StyleSheet.create({
   thirstTrack: { width: "90%", height: 5, backgroundColor: "rgba(0,0,0,0.12)", borderRadius: 3, overflow: "hidden", marginTop: 2 },
   thirstFill: { height: "100%", borderRadius: 3 },
   overlay: {
-    ...StyleSheet.absoluteFillObject, zIndex: 20, alignItems: "center", justifyContent: "center",
+    ...StyleSheet.absoluteFill, zIndex: 20, alignItems: "center", justifyContent: "center",
     backgroundColor: "rgba(240,249,255,0.88)", gap: 12, padding: 32,
   },
   bigEmoji: { fontSize: 72 },

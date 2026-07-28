@@ -1030,7 +1030,7 @@ const s = StyleSheet.create({
     borderTopColor: "rgba(187,247,208,0.12)",
   },
   gasField: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     justifyContent: "flex-end",
   },
   gasSwirl: {
@@ -1058,7 +1058,7 @@ const s = StyleSheet.create({
     borderColor: "rgba(187,247,208,0.14)",
   },
   groundBackdropTrees: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     justifyContent: "flex-end",
   },
   decorTree: {
