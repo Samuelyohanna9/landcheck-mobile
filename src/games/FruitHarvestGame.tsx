@@ -10,7 +10,7 @@ import {
   Vibration,
   Alert,
 } from "react-native";
-import { SystemBars } from "react-native-edge-to-edge";
+import { StatusBar } from "expo-status-bar";
 import { LinearGradient } from "expo-linear-gradient";
 import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -549,7 +549,7 @@ export const FruitHarvestGame = () => {
 
   return (
     <View style={styles.root}>
-      <SystemBars style="light" />
+      <StatusBar style="light" />
       <LinearGradient colors={["#7c2d12", "#b45309", "#f97316"]} style={[styles.header, { paddingTop: insets.top + 8 }]}>
         <View style={styles.headerRow}>
           <Pressable

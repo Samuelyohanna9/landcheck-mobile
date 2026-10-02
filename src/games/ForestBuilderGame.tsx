@@ -11,7 +11,7 @@ import {
   Vibration,
   View,
 } from "react-native";
-import { SystemBars } from "react-native-edge-to-edge";
+import { StatusBar } from "expo-status-bar";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { LinearGradient } from "expo-linear-gradient";
 import { Ionicons } from "@expo/vector-icons";
@@ -473,7 +473,7 @@ export const ForestBuilderGame = () => {
 
   return (
     <View style={styles.root}>
-      <SystemBars style="dark" />
+      <StatusBar style="dark" />
       <LinearGradient colors={["#ecfeff", "#dcfce7", "#f0fdf4"]} style={[styles.header, { paddingTop: insets.top + 8 }]}>
         <ForestBackdrop />
         <View style={styles.headerTop}>

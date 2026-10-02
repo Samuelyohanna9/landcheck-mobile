@@ -3,7 +3,7 @@ import {
   View, Text, ScrollView, Pressable, StyleSheet,
   ActivityIndicator, Alert,
 } from "react-native";
-import { SystemBars } from "react-native-edge-to-edge";
+import { StatusBar } from "expo-status-bar";
 import { LinearGradient } from "expo-linear-gradient";
 import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -73,7 +73,7 @@ export const SchoolGreeningGame = () => {
 
   return (
     <View style={styles.root}>
-      <SystemBars style="light" />
+      <StatusBar style="light" />
       <LinearGradient colors={["#312e81", "#3730a3", "#4338ca"]} style={[styles.header, { paddingTop: insets.top + 8 }]}>
         <View style={styles.headerRow}>
           <Pressable onPress={() => navigation.goBack()} style={styles.backBtn}>

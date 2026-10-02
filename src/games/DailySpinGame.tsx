@@ -9,7 +9,7 @@ import {
   View, Text, Pressable, StyleSheet, Animated, Easing,
   Alert, Dimensions, Vibration, PanResponder,
 } from "react-native";
-import { SystemBars } from "react-native-edge-to-edge";
+import { StatusBar } from "expo-status-bar";
 import Svg, { Path, Circle, Text as SvgText, G, Defs, LinearGradient as SvgGrad, Stop, Polygon } from "react-native-svg";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { LinearGradient } from "expo-linear-gradient";
@@ -182,7 +182,7 @@ export const DailySpinGame = () => {
 
   return (
     <View style={s.root}>
-      <SystemBars style="light" />
+      <StatusBar style="light" />
       <LinearGradient colors={["#1e0933", "#2d1155", "#3b1a6e"]} style={[s.header, { paddingTop: insets.top + 8 }]}>
         <View style={s.headerRow}>
           <Pressable onPress={() => nav.goBack()} style={s.back}><Ionicons name="arrow-back" size={22} color="#fff" /></Pressable>

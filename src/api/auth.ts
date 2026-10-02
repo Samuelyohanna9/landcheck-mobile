@@ -101,6 +101,19 @@ export const signUpSponsorMobile = async (input: SponsorSignupInput) => {
   return normalizeSession(response.data || {}, "green_sponsor");
 };
 
+export const claimGuestSponsorMobile = async (sponsorId: number, email: string, password: string) => {
+  const cleanEmail = email.trim().toLowerCase();
+  if (!sponsorId || !cleanEmail || !password) {
+    throw new Error("Sponsor id, email, and password are required.");
+  }
+  const response = await api.post<LoginResponse>("/green/sponsor/guest/claim", {
+    sponsor_id: sponsorId,
+    email: cleanEmail,
+    password,
+  });
+  return normalizeSession(response.data || {}, "green_sponsor");
+};
+
 export const requestSponsorPasswordReset = async (email: string) => {
   const cleanEmail = email.trim().toLowerCase();
   if (!cleanEmail) {

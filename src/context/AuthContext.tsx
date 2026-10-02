@@ -4,7 +4,7 @@ import { api } from "../api/client";
 import { bootstrapLocalDatabase } from "../storage/database";
 import { clearSession, loadSession, saveSession } from "../storage/session";
 import { hasStoredConsent, hasSeenIntro, markIntroSeen, saveStoredConsent } from "../storage/privacy";
-import { loginMobile, loginSponsorMobile, signUpSponsorMobile } from "../api/auth";
+import { claimGuestSponsorMobile, loginMobile, loginSponsorMobile, signUpSponsorMobile } from "../api/auth";
 import { fetchPrivacyPolicy, recordMobileConsent } from "../api/privacy";
 import { ensureGreenBackgroundTasksRegistered, unregisterGreenBackgroundTasks } from "../background/greenBackgroundTasks";
 import { clearGreenPushRegistration, syncGreenPushRegistration } from "../notifications/greenPushRegistration";
@@ -33,6 +33,7 @@ type AuthContextValue = {
     password: string;
     referred_by_code?: string | null;
   }) => Promise<void>;
+  claimGuestSponsor: (sponsorId: number, email: string, password: string) => Promise<void>;
   signOut: () => Promise<void>;
   acceptConsent: () => Promise<void>;
   declineConsent: () => Promise<void>;
@@ -187,6 +188,14 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       },
       signUpSponsor: async (input) => {
         const signedIn = await signUpSponsorMobile(input);
+        setSession(signedIn);
+        await saveSession(signedIn);
+        setPendingConsent(null);
+        const introSeen = await hasSeenIntro();
+        if (!introSeen) setNeedsIntro(true);
+      },
+      claimGuestSponsor: async (sponsorId, email, password) => {
+        const signedIn = await claimGuestSponsorMobile(sponsorId, email, password);
         setSession(signedIn);
         await saveSession(signedIn);
         setPendingConsent(null);

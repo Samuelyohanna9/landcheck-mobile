@@ -10,7 +10,7 @@ import {
   View,
 } from "react-native";
 import { Image } from "expo-image";
-import { SystemBars } from "react-native-edge-to-edge";
+import { StatusBar } from "expo-status-bar";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { LinearGradient } from "expo-linear-gradient";
 import { Ionicons } from "@expo/vector-icons";
@@ -312,7 +312,7 @@ export const ForestQuestGame = () => {
 
   return (
     <View style={styles.root}>
-      <SystemBars style="light" />
+      <StatusBar style="light" />
       <LinearGradient colors={["#0c2f1c", "#14532d", "#0f3d20"]} style={[styles.header, { paddingTop: insets.top + 8 }]}>
         <View style={styles.headerRow}>
           <Pressable onPress={() => navigation.goBack()} style={styles.backBtn}>

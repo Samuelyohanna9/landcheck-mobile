@@ -1,6 +1,7 @@
-import { ActivityIndicator, StyleSheet, Text, View } from "react-native";
+import { StyleSheet, Text, View } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
 import { colors, spacing } from "../theme/tokens";
+import { GreenLoadingAnimation } from "./GreenLoadingAnimation";
 
 type LoadingViewProps = {
   title: string;
@@ -10,7 +11,7 @@ type LoadingViewProps = {
 export const LoadingView = ({ title, subtitle }: LoadingViewProps) => (
   <LinearGradient colors={[colors.background, colors.backgroundDeep]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.wrap}>
     <View style={styles.card}>
-      <ActivityIndicator size="large" color={colors.primary} />
+      <GreenLoadingAnimation size="medium" />
       <Text style={styles.title}>{title}</Text>
       {subtitle ? <Text style={styles.subtitle}>{subtitle}</Text> : null}
     </View>

@@ -124,15 +124,22 @@ export const LoginScreen = ({ navigation, route }: Props) => {
       console.log("Deep link received: ", url);
       const query = url.split("?")[1];
       if (query) {
-        const params = query.split("&");
-        for (const p of params) {
+        const parsed: Record<string, string> = {};
+        for (const p of query.split("&")) {
           const [key, val] = p.split("=");
-          if (key === "ref" && val) {
-            setReferredByCode(decodeURIComponent(val));
-            setSponsorSignup(true);
-            setError("");
-            break;
-          }
+          if (key && val) parsed[key] = decodeURIComponent(val);
+        }
+        if (parsed.sponsor_id && parsed.email) {
+          navigation.navigate("SponsorClaimAccount", {
+            sponsorId: Number(parsed.sponsor_id),
+            email: parsed.email,
+          });
+          return;
+        }
+        if (parsed.ref) {
+          setReferredByCode(parsed.ref);
+          setSponsorSignup(true);
+          setError("");
         }
       }
     } catch (err) {
@@ -217,7 +224,12 @@ export const LoginScreen = ({ navigation, route }: Props) => {
   };
 
   return (
-    <LinearGradient colors={["#eef8ef", "#d9f0dc", "#f7fbf7"]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.gradient}>
+    <LinearGradient
+      colors={authRoute === "field" ? ["#16211a", "#0f1712"] : ["#eef8ef", "#d9f0dc", "#f7fbf7"]}
+      start={{ x: 0, y: 0 }}
+      end={{ x: 1, y: 1 }}
+      style={styles.gradient}
+    >
       <SafeAreaView style={styles.safe} edges={["top"]}>
         <KeyboardAvoidingView style={styles.keyboard} behavior={Platform.OS === "ios" ? "padding" : undefined}>
           <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
@@ -239,10 +251,9 @@ export const LoginScreen = ({ navigation, route }: Props) => {
             {authRoute === "field" ? (
               <>
                 <View style={styles.heroCard}>
-                  <View style={styles.heroGlow} />
                   <View style={styles.heroHead}>
                     <View style={styles.brandTile}>
-                      <BrandMark size={58} />
+                      <BrandMark size={48} />
                     </View>
                     <View style={styles.heroText}>
                       <Text style={styles.heroEyebrow}>{routeCopy.eyebrow}</Text>
@@ -250,7 +261,7 @@ export const LoginScreen = ({ navigation, route }: Props) => {
                       <Text style={styles.subtitle}>{routeCopy.subtitle}</Text>
                     </View>
                     <View style={styles.heroOrb}>
-                      <Ionicons name={routeCopy.icon} size={22} color={colors.primaryDark} />
+                      <Ionicons name={routeCopy.icon} size={22} color={colors.warning} />
                     </View>
                   </View>
                 </View>
@@ -279,7 +290,7 @@ export const LoginScreen = ({ navigation, route }: Props) => {
               </>
             ) : (
               <View style={styles.brandHeader}>
-                <BrandMark size={74} />
+                <BrandMark size={44} />
                 <Text style={styles.brandHeaderTitle}>LandCheck Green</Text>
                 <Text style={styles.brandHeaderSubtitle}>
                   {sponsorSignup
@@ -452,6 +463,7 @@ export const LoginScreen = ({ navigation, route }: Props) => {
                 }
                 onPress={onSubmit}
                 disabled={submitting || requestingReset}
+                accentColors={authRoute === "field" ? [colors.warning, "#b45f04"] : undefined}
               />
 
               {authRoute === "sponsor" ? (
@@ -478,7 +490,7 @@ export const LoginScreen = ({ navigation, route }: Props) => {
                 <Text style={styles.altRouteEyebrow}>Partner staff only</Text>
                 <Text style={styles.altRouteTitle}>Agent, NGO, or organization staff?</Text>
                 <Text style={styles.altRouteBody}>
-                  Use the field login issued by your organization to capture tasks, submit evidence, and work on assigned projects.
+                  Sign in with the field credentials issued by your organization.
                 </Text>
                 <Pressable onPress={openFieldRoute} style={({ pressed }) => [styles.altRouteButton, pressed && styles.altRouteButtonPressed]}>
                   <Ionicons name="compass-outline" size={18} color={colors.primaryDark} />
@@ -511,9 +523,10 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   content: {
-    padding: spacing.lg,
-    gap: spacing.md,
-    paddingBottom: spacing.xl,
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.sm,
+    gap: spacing.sm,
+    paddingBottom: spacing.sm,
   },
   topBar: {
     flexDirection: "row",
@@ -560,29 +573,23 @@ const styles = StyleSheet.create({
     fontWeight: "900",
     letterSpacing: 0.3,
   },
+  // Field-only hero (see the authRoute === "field" branch above) - deliberately dark/utilitarian
+  // with an amber accent, rather than sponsor's soft green/white "trust" treatment, and with no
+  // decorative glow blob.
   heroCard: {
     position: "relative",
     overflow: "hidden",
     gap: spacing.md,
     padding: spacing.lg,
     borderRadius: radii.xl,
-    backgroundColor: "rgba(255,255,255,0.95)",
+    backgroundColor: "rgba(255,255,255,0.06)",
     borderWidth: 1,
-    borderColor: "rgba(16,91,44,0.08)",
-    shadowColor: colors.shadow,
-    shadowOpacity: 0.12,
+    borderColor: "rgba(255,255,255,0.12)",
+    shadowColor: "rgba(0,0,0,0.4)",
+    shadowOpacity: 0.3,
     shadowRadius: 20,
     shadowOffset: { width: 0, height: 8 },
     elevation: 4,
-  },
-  heroGlow: {
-    position: "absolute",
-    width: 180,
-    height: 180,
-    borderRadius: 90,
-    backgroundColor: "rgba(42,168,82,0.10)",
-    right: -50,
-    top: -65,
   },
   heroHead: {
     flexDirection: "row",
@@ -604,7 +611,7 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   heroEyebrow: {
-    color: colors.primaryDark,
+    color: colors.warning,
     fontSize: 12,
     fontWeight: "900",
     letterSpacing: 0.7,
@@ -616,17 +623,17 @@ const styles = StyleSheet.create({
     borderRadius: 25,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "#e4f6e8",
+    backgroundColor: "rgba(217,119,6,0.16)",
   },
   title: {
-    color: colors.text,
+    color: colors.inverseText,
     fontSize: 27,
     lineHeight: 33,
     fontWeight: "900",
     letterSpacing: -0.7,
   },
   subtitle: {
-    color: colors.textMuted,
+    color: "rgba(255,255,255,0.72)",
     fontSize: 14,
     lineHeight: 21,
   },
@@ -675,8 +682,8 @@ const styles = StyleSheet.create({
     marginVertical: 4,
   },
   formCard: {
-    gap: spacing.sm,
-    padding: spacing.md,
+    gap: spacing.xs,
+    padding: spacing.sm + 4,
     borderRadius: radii.xl,
     backgroundColor: "#ffffff",
     borderWidth: 1,
@@ -726,27 +733,27 @@ const styles = StyleSheet.create({
   },
   formTitle: {
     color: colors.text,
-    fontSize: 24,
-    lineHeight: 30,
+    fontSize: 20,
+    lineHeight: 25,
     fontWeight: "900",
     letterSpacing: -0.45,
   },
   formSubtitle: {
     color: colors.textSoft,
-    fontSize: 13,
-    lineHeight: 20,
-    marginBottom: 4,
+    fontSize: 12.5,
+    lineHeight: 17,
+    marginBottom: 2,
   },
   inputBlock: {
-    gap: 6,
+    gap: 4,
   },
   label: {
     color: colors.text,
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: "700",
   },
   input: {
-    minHeight: 52,
+    minHeight: 44,
     borderRadius: radii.lg,
     borderWidth: 1,
     borderColor: colors.border,
@@ -756,7 +763,7 @@ const styles = StyleSheet.create({
     fontSize: 15,
   },
   passwordWrap: {
-    minHeight: 52,
+    minHeight: 44,
     borderRadius: radii.lg,
     borderWidth: 1,
     borderColor: colors.border,
@@ -778,7 +785,7 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   supportRow: {
-    gap: 8,
+    gap: 4,
     marginTop: -2,
   },
   supportButton: {
@@ -786,8 +793,8 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 8,
     alignSelf: "flex-start",
-    paddingHorizontal: 14,
-    paddingVertical: 11,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
     borderRadius: radii.pill,
     backgroundColor: colors.primarySoft,
     borderWidth: 1,
@@ -840,27 +847,27 @@ const styles = StyleSheet.create({
   brandHeader: {
     alignItems: "center",
     justifyContent: "center",
-    paddingVertical: spacing.xl,
-    gap: spacing.xs,
+    paddingVertical: spacing.xs,
+    gap: 2,
   },
   brandHeaderTitle: {
     color: colors.primaryDark,
-    fontSize: 28,
+    fontSize: 21,
     fontWeight: "900",
     letterSpacing: -0.5,
-    marginTop: spacing.xs,
+    marginTop: 2,
   },
   brandHeaderSubtitle: {
     color: colors.textMuted,
-    fontSize: 14,
-    lineHeight: 21,
+    fontSize: 12.5,
+    lineHeight: 16,
     textAlign: "center",
     paddingHorizontal: spacing.md,
   },
   toggleFooter: {
     alignItems: "center",
-    marginTop: spacing.sm,
-    paddingVertical: spacing.xs,
+    marginTop: 2,
+    paddingVertical: 2,
   },
   toggleFooterLink: {
     padding: spacing.xs,
@@ -874,8 +881,8 @@ const styles = StyleSheet.create({
     fontWeight: "700",
   },
   altRouteCard: {
-    gap: 10,
-    padding: spacing.md,
+    gap: 5,
+    padding: spacing.sm,
     borderRadius: radii.xl,
     backgroundColor: "rgba(255,255,255,0.92)",
     borderWidth: 1,
@@ -888,24 +895,24 @@ const styles = StyleSheet.create({
   },
   altRouteEyebrow: {
     color: colors.primaryDark,
-    fontSize: 11,
+    fontSize: 10.5,
     fontWeight: "900",
     letterSpacing: 0.7,
     textTransform: "uppercase",
   },
   altRouteTitle: {
     color: colors.text,
-    fontSize: 18,
-    lineHeight: 23,
+    fontSize: 15,
+    lineHeight: 19,
     fontWeight: "900",
   },
   altRouteBody: {
     color: colors.textSoft,
-    fontSize: 13,
-    lineHeight: 20,
+    fontSize: 12,
+    lineHeight: 16,
   },
   altRouteButton: {
-    minHeight: 50,
+    minHeight: 44,
     borderRadius: radii.lg,
     borderWidth: 1.5,
     borderColor: "rgba(22,103,58,0.18)",

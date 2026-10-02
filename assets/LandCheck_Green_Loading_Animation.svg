@@ -1,0 +1,124 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="420" height="420" viewBox="0 0 420 420" role="img" aria-labelledby="title desc">
+  <title id="title">LandCheck Green loading animation</title>
+  <desc id="desc">A growing leaf and verified tree symbol animate above a loading indicator for the LandCheck Green web and Android applications.</desc>
+
+  <defs>
+    <linearGradient id="tileGreen" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#43A53D"/>
+      <stop offset=".58" stop-color="#11752F"/>
+      <stop offset="1" stop-color="#064E2B"/>
+    </linearGradient>
+    <linearGradient id="leafGreen" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#E3FF68"/>
+      <stop offset=".52" stop-color="#A8E84D"/>
+      <stop offset="1" stop-color="#4AAE37"/>
+    </linearGradient>
+    <linearGradient id="progressGreen" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#A8E84D" stop-opacity="0"/>
+      <stop offset=".35" stop-color="#A8E84D"/>
+      <stop offset="1" stop-color="#22C55E"/>
+    </linearGradient>
+    <radialGradient id="haloGreen">
+      <stop offset="0" stop-color="#A8E84D" stop-opacity=".22"/>
+      <stop offset="1" stop-color="#A8E84D" stop-opacity="0"/>
+    </radialGradient>
+    <filter id="shadow" x="-40%" y="-40%" width="180%" height="190%">
+      <feDropShadow dx="0" dy="10" stdDeviation="10" flood-color="#052E1A" flood-opacity=".42"/>
+    </filter>
+    <filter id="glow" x="-100%" y="-100%" width="300%" height="300%">
+      <feGaussianBlur stdDeviation="4" result="blur"/>
+      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <clipPath id="progressClip">
+      <rect x="80" y="340" width="260" height="5" rx="2.5"/>
+    </clipPath>
+  </defs>
+
+  <style>
+    .halo { transform-box: fill-box; transform-origin: center; animation: halo 2.2s ease-out infinite; }
+    .logo-tile { transform-box: fill-box; transform-origin: center; animation: float 2.8s ease-in-out infinite; }
+    .leaf { transform-box: fill-box; transform-origin: 16% 86%; animation: leaf-grow 2.2s cubic-bezier(.34,1.35,.64,1) infinite; }
+    .leaf-line { stroke-dasharray: 190; animation: vein 2.2s ease-in-out infinite; }
+    .verify-ring { transform-box: fill-box; transform-origin: center; animation: verified 1.8s ease-out infinite; }
+    .tree-dot { transform-box: fill-box; transform-origin: center; animation: tree-pop 1.8s ease-in-out infinite; }
+    .progress { animation: progress 1.9s cubic-bezier(.4,0,.2,1) infinite; }
+    .status { animation: breathe 1.9s ease-in-out infinite; }
+
+    @keyframes halo {
+      0% { transform: scale(.65); opacity: .15; }
+      60% { opacity: .65; }
+      100% { transform: scale(1.35); opacity: 0; }
+    }
+    @keyframes float {
+      0%, 100% { transform: translateY(3px); }
+      50% { transform: translateY(-5px); }
+    }
+    @keyframes leaf-grow {
+      0%, 12% { transform: scale(.74) rotate(-8deg); opacity: .45; }
+      52%, 78% { transform: scale(1) rotate(0); opacity: 1; }
+      100% { transform: scale(.88) rotate(3deg); opacity: .72; }
+    }
+    @keyframes vein {
+      0%, 18% { stroke-dashoffset: 190; opacity: 0; }
+      58%, 82% { stroke-dashoffset: 0; opacity: 1; }
+      100% { stroke-dashoffset: -190; opacity: 0; }
+    }
+    @keyframes verified {
+      0% { transform: scale(.25); opacity: .95; }
+      78%, 100% { transform: scale(2.4); opacity: 0; }
+    }
+    @keyframes tree-pop {
+      0%, 100% { transform: scale(.78); opacity: .65; }
+      45% { transform: scale(1.12); opacity: 1; }
+    }
+    @keyframes progress {
+      0% { transform: translateX(-280px); }
+      58%, 100% { transform: translateX(280px); }
+    }
+    @keyframes breathe { 0%, 100% { opacity: .55; } 50% { opacity: 1; } }
+
+    @media (prefers-reduced-motion: reduce) {
+      .halo, .logo-tile, .leaf, .leaf-line, .verify-ring, .tree-dot, .progress, .status { animation: none; }
+      .progress { transform: translateX(0); }
+    }
+  </style>
+
+  <!-- Soft growth signal -->
+  <circle class="halo" cx="210" cy="166" r="116" fill="url(#haloGreen)"/>
+
+  <!-- LandCheck Green mark, simplified from the supplied app logo -->
+  <g class="logo-tile" filter="url(#shadow)">
+    <rect x="118" y="72" width="184" height="184" rx="46" fill="url(#tileGreen)"/>
+    <rect x="120" y="74" width="180" height="180" rx="44" fill="none" stroke="#7BD549" stroke-opacity=".3" stroke-width="2"/>
+
+    <!-- White L/check foundation -->
+    <path d="M158 144 L158 211 Q158 226 174 226 L246 226 Q258 226 258 213 L258 193 L230 211 L190 211 L190 144 Q190 132 178 132 L170 132 Q158 132 158 144Z" fill="#F8FFF2"/>
+    <path d="M197 174 L216 193 L270 126" fill="none" stroke="#052E1A" stroke-width="20" stroke-linecap="square" stroke-linejoin="miter" opacity=".92"/>
+
+    <!-- Animated leaf -->
+    <g class="leaf">
+      <path d="M205 178 C212 126 251 93 288 84 C283 119 266 150 221 187 C236 154 255 126 278 99 C246 119 224 143 205 178Z" fill="url(#leafGreen)" stroke="#DFFF72" stroke-opacity=".55" stroke-width="1.3"/>
+      <path class="leaf-line" d="M207 181 C228 147 252 118 279 96" fill="none" stroke="#F0FF9A" stroke-width="2.6" stroke-linecap="round"/>
+    </g>
+  </g>
+
+  <!-- Verified tree activity -->
+  <g transform="translate(285 238)" filter="url(#glow)">
+    <circle class="verify-ring" cx="0" cy="0" r="9" fill="none" stroke="#A8E84D" stroke-width="2"/>
+    <circle class="tree-dot" cx="0" cy="0" r="6" fill="#A8E84D"/>
+    <path d="M0 -4 L-4 1 H-1 L-4 5 H4 L1 1 H4 Z" fill="#075B2B"/>
+  </g>
+
+  <!-- Product label -->
+  <text x="210" y="297" text-anchor="middle" font-family="Inter, 'Segoe UI', Arial, sans-serif" font-size="31" font-weight="750" letter-spacing="-.8">
+    <tspan fill="#F1F5F9">LandCheck</tspan><tspan fill="#8DDF45"> Green</tspan>
+  </text>
+  <text x="210" y="321" text-anchor="middle" font-family="Inter, 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="700" letter-spacing="3.2" fill="#86A897">PLANT • VERIFY • PROTECT</text>
+
+  <!-- Loading rail -->
+  <rect x="80" y="340" width="260" height="5" rx="2.5" fill="#86A897" opacity=".2"/>
+  <g clip-path="url(#progressClip)">
+    <rect class="progress" x="80" y="340" width="116" height="5" rx="2.5" fill="url(#progressGreen)"/>
+  </g>
+  <text class="status" x="210" y="376" text-anchor="middle" font-family="Inter, 'Segoe UI', Arial, sans-serif" font-size="13" font-weight="500" fill="#86A897">Loading environmental impact workspace…</text>
+</svg>

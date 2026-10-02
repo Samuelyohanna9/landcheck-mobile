@@ -15,7 +15,7 @@ import {
   View, Text, Pressable, StyleSheet, Animated, Alert,
   TextInput, Dimensions, ScrollView, PanResponder, Vibration,
 } from "react-native";
-import { SystemBars } from "react-native-edge-to-edge";
+import { StatusBar } from "expo-status-bar";
 import Svg, {
   Circle,
   Defs,
@@ -463,7 +463,7 @@ export const GrowMyTreeGame = () => {
 
   return (
     <View style={s.root}>
-      <SystemBars style="light" />
+      <StatusBar style="light" />
       <LinearGradient colors={skyGrad} style={[s.header, { paddingTop: insets.top + 8 }]}>
         <View style={s.headerRow}>
           <Pressable onPress={() => nav.goBack()} style={s.back}><Ionicons name="arrow-back" size={22} color="#fff" /></Pressable>

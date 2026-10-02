@@ -19,14 +19,18 @@ export const supportsNativeNotifications = () => {
 };
 
 if (supportsNativeNotifications()) {
-  Notifications.setNotificationHandler({
-    handleNotification: async () => ({
-      shouldShowBanner: true,
-      shouldShowList: true,
-      shouldPlaySound: true,
-      shouldSetBadge: false,
-    }),
-  });
+  try {
+    Notifications.setNotificationHandler({
+      handleNotification: async () => ({
+        shouldShowBanner: true,
+        shouldShowList: true,
+        shouldPlaySound: true,
+        shouldSetBadge: false,
+      }),
+    });
+  } catch {
+    // Never let notification bootstrap break the first app render.
+  }
 }
 
 export const GREEN_CHANNEL_ID = "green-alerts";
@@ -34,19 +38,23 @@ export const SPONSOR_CHANNEL_ID = "sponsor-alerts";
 
 export const setupGreenNotifications = async () => {
   if (!supportsNativeNotifications()) return;
-  if (Platform.OS === "android") {
-    await Notifications.setNotificationChannelAsync(GREEN_CHANNEL_ID, {
-      name: "LandCheck Green Alerts",
-      importance: Notifications.AndroidImportance.HIGH,
-      vibrationPattern: [0, 180, 120, 180],
-      lightColor: "#2f8f4e",
-    });
-    await Notifications.setNotificationChannelAsync(SPONSOR_CHANNEL_ID, {
-      name: "LandCheck Sponsor Alerts",
-      importance: Notifications.AndroidImportance.HIGH,
-      vibrationPattern: [0, 180, 120, 180],
-      lightColor: "#c5a059",
-    });
+  try {
+    if (Platform.OS === "android") {
+      await Notifications.setNotificationChannelAsync(GREEN_CHANNEL_ID, {
+        name: "LandCheck Green Alerts",
+        importance: Notifications.AndroidImportance.HIGH,
+        vibrationPattern: [0, 180, 120, 180],
+        lightColor: "#2f8f4e",
+      });
+      await Notifications.setNotificationChannelAsync(SPONSOR_CHANNEL_ID, {
+        name: "LandCheck Sponsor Alerts",
+        importance: Notifications.AndroidImportance.HIGH,
+        vibrationPattern: [0, 180, 120, 180],
+        lightColor: "#c5a059",
+      });
+    }
+  } catch {
+    // Channel setup is best-effort. Launch must still succeed without it.
   }
 };
 

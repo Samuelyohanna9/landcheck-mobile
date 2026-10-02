@@ -42,6 +42,8 @@ yarn-error.*
 *service-account*.json
 google-services.json
 GoogleService-Info.plist
+landcheck-gee-*.json
+/release-keystore/
 
 # typescript
 *.tsbuildinfo

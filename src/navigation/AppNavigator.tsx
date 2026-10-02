@@ -13,6 +13,7 @@ import { useAuth } from "../context/AuthContext";
 import { useGreenSync } from "../context/GreenSyncContext";
 import { BootScreen } from "../screens/common/BootScreen";
 import { LoginScreen } from "../screens/auth/LoginScreen";
+import { SponsorClaimAccountScreen } from "../screens/auth/SponsorClaimAccountScreen";
 import { PrivacyConsentScreen } from "../screens/common/PrivacyConsentScreen";
 import { IntroScreen } from "../screens/common/IntroScreen";
 import { ChangePasswordScreen } from "../screens/common/ChangePasswordScreen";
@@ -394,6 +395,7 @@ export const AppNavigator = () => {
               component={LoginScreen}
               initialParams={{ authRoute: "sponsor" }}
             />
+            <RootStack.Screen name="SponsorClaimAccount" component={SponsorClaimAccountScreen} />
           </>
         ) : pendingConsent ? (
           <RootStack.Screen name="PrivacyConsent" component={PrivacyConsentScreen} />

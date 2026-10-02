@@ -10,33 +10,35 @@ const withPlayStoreSafePermissions: ConfigPlugin = (config) =>
     return config;
   });
 
-// NOTE: Play Console recommends AGP 9.0+, and React Native's own gradle-plugin still pins
-// 8.12.0 as of RN 0.86. Pinning AGP to 9.0.0 here was tried and reverted - it broke the
-// Kotlin Android Gradle plugin ("Cannot add extension with name 'kotlin', as there is an
-// extension already registered with that name"), i.e. it's not actually compatible with this
-// project's current Kotlin Gradle Plugin version. Leave AGP on RN's managed default until RN's
-// own gradle-plugin bumps it (tracked upstream), rather than force a version combination that
-// doesn't build.
-
-const config: ExpoConfig = {
+// newArchEnabled is a real, respected Expo config key but is missing from this version's
+// @expo/config-types definitions - extend the type locally rather than casting the whole config.
+const config: ExpoConfig & { newArchEnabled?: boolean } = {
   name: "LC Green",
   slug: "landcheck-mobile",
   version: "1.0.43",
   scheme: "landcheckmobile",
   orientation: "default",
   icon: "./assets/green-logo-cropped-760.png",
+  // Keep the Expo config flag explicit after rolling back to the last stable Android stack.
+  newArchEnabled: false,
   ios: {
     supportsTablet: true,
     bundleIdentifier: "online.landcheck.mobile",
     infoPlist: {
       NSLocationWhenInUseUsageDescription: "LandCheck Green uses GPS to record tree planting and maintenance locations in the field.",
       NSCameraUsageDescription: "LandCheck Green uses the camera to capture tree and maintenance evidence photos.",
+      // Required by sp-react-native-in-app-updates to open the App Store listing when an update
+      // prompt is accepted on iOS.
+      LSApplicationQueriesSchemes: ["itms-apps"],
     },
   },
   android: {
     package: "online.landcheck.mobile",
     versionCode: 44,
-    googleServicesFile: "./google-services.json",
+    // Locally this file exists on disk (gitignored - never committed as a credential file).
+    // EAS Build only uploads git-tracked files, so on EAS it comes from a "file" environment
+    // variable instead, which is downloaded to a local path and exposed via this env var.
+    googleServicesFile: process.env.GOOGLE_SERVICES_JSON || "./google-services.json",
     permissions: ["ACCESS_COARSE_LOCATION", "ACCESS_FINE_LOCATION", "CAMERA"],
     adaptiveIcon: {
       backgroundColor: "#ffffff",
@@ -49,6 +51,8 @@ const config: ExpoConfig = {
     favicon: "./assets/favicon.png",
   },
   extra: {
+    apiUrl: process.env.EXPO_PUBLIC_API_URL || "https://api.landcheck.online",
+    mapboxToken: process.env.EXPO_PUBLIC_MAPBOX_TOKEN || "",
     eas: {
       projectId: process.env.EXPO_PUBLIC_EAS_PROJECT_ID || "ad94606a-86eb-45e6-a6fd-75fb1b54dad6",
     },
@@ -84,9 +88,9 @@ const config: ExpoConfig = {
         defaultChannel: "green-alerts",
       },
     ],
+    "expo-font",
     "expo-background-task",
     "expo-image",
-    "expo-status-bar",
     [
       "expo-splash-screen",
       {
@@ -95,7 +99,22 @@ const config: ExpoConfig = {
         backgroundColor: "#ffffff",
       },
     ],
-    "react-native-edge-to-edge",
+    // REVERTED (see landcheck-mobile crash postmortem): enabling R8 here shipped to production
+    // without adequate ProGuard keep rules for the app's native modules (Mapbox, background-task,
+    // notifications, etc. - the checked-in proguard-rules.pro only covered reanimated/turbomodule),
+    // and R8 stripped/renamed classes those modules need at runtime, crashing the app on launch
+    // for real users. Re-enabling this requires writing full keep rules for every native module
+    // AND verifying with a real local build installed on a physical device first - not just a
+    // clean typecheck/compile - before it's ever submitted to production again.
+    // [
+    //   "expo-build-properties",
+    //   {
+    //     android: {
+    //       enableProguardInReleaseBuilds: true,
+    //       enableShrinkResourcesInReleaseBuilds: true,
+    //     },
+    //   },
+    // ],
     withPlayStoreSafePermissions,
   ] as NonNullable<ExpoConfig["plugins"]>,
 };

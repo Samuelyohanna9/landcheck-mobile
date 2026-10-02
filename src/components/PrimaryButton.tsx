@@ -7,9 +7,13 @@ type PrimaryButtonProps = {
   onPress: () => void;
   disabled?: boolean;
   variant?: "primary" | "secondary" | "ghost";
+  // Optional override for the "primary" variant's gradient - omit to keep the default green
+  // gradient. Used by screens that need a distinct accent (e.g. the field-agent login CTA)
+  // without changing the shared default for every other caller of this button.
+  accentColors?: readonly [string, string];
 };
 
-export const PrimaryButton = ({ label, onPress, disabled = false, variant = "primary" }: PrimaryButtonProps) => {
+export const PrimaryButton = ({ label, onPress, disabled = false, variant = "primary", accentColors }: PrimaryButtonProps) => {
   if (variant === "ghost") {
     return (
       <Pressable onPress={onPress} disabled={disabled} style={({ pressed }) => [styles.ghost, pressed && styles.pressed, disabled && styles.disabled]}>
@@ -19,7 +23,7 @@ export const PrimaryButton = ({ label, onPress, disabled = false, variant = "pri
   }
 
   const gradientColors: readonly [string, string] =
-    variant === "primary" ? [colors.primary, colors.primaryDark] : [colors.panelSoft, colors.panelElevated];
+    variant === "primary" ? (accentColors ?? [colors.primary, colors.primaryDark]) : [colors.panelSoft, colors.panelElevated];
   const labelStyle = variant === "primary" ? styles.labelPrimary : styles.labelSecondary;
 
   return (

@@ -46,8 +46,10 @@ const ROUTES: RouteConfig[] = [
     cta: "Continue to field login",
     icon: "compass-outline",
     highlights: ["Assigned tasks only", "Organization login", "Field evidence capture"],
-    gradient: ["#ffffff", "#f7faf7"],
-    cardTone: "light",
+    // Dark + amber, not soft green/white like sponsor - field work should read as fast and
+    // operational, not trust-and-checkout.
+    gradient: ["#16211a", "#0f1712"],
+    cardTone: "dark",
   },
 ];
 
@@ -96,7 +98,7 @@ export const AuthRouteSelectScreen = ({ navigation }: Props) => {
                 <LinearGradient colors={item.gradient} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={[styles.routeCard, darkCard ? styles.routeCardDark : styles.routeCardLight]}>
                   <View style={styles.cardRow}>
                     <View style={[styles.routeIconWrap, darkCard ? styles.routeIconWrapDark : styles.routeIconWrapLight]}>
-                      <Ionicons name={item.icon} size={22} color={darkCard ? "#c5a059" : "#0c3b20"} />
+                      <Ionicons name={item.icon} size={22} color={darkCard ? colors.warning : "#0c3b20"} />
                     </View>
                     <View style={styles.cardContent}>
                       <View style={styles.titleRow}>
@@ -293,8 +295,8 @@ const styles = StyleSheet.create({
     borderWidth: 1,
   },
   badgeDark: {
-    backgroundColor: "rgba(197, 160, 89, 0.15)",
-    borderColor: "rgba(197, 160, 89, 0.3)",
+    backgroundColor: "rgba(217, 119, 6, 0.16)",
+    borderColor: "rgba(217, 119, 6, 0.32)",
   },
   badgeLight: {
     backgroundColor: "rgba(42, 168, 82, 0.08)",
@@ -305,7 +307,7 @@ const styles = StyleSheet.create({
     fontWeight: "800",
   },
   badgeTextDark: {
-    color: "#ffd79c",
+    color: "#f7b955",
   },
   badgeTextLight: {
     color: "#0c3b20",
@@ -327,7 +329,7 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   arrowBubbleDark: {
-    backgroundColor: "#c5a059",
+    backgroundColor: colors.warning,
   },
   arrowBubbleLight: {
     backgroundColor: "#0c3b20",

@@ -2,7 +2,7 @@ import { useCallback } from "react";
 import {
   View, Text, ScrollView, Pressable, StyleSheet,
 } from "react-native";
-import { SystemBars } from "react-native-edge-to-edge";
+import { StatusBar } from "expo-status-bar";
 import { useFocusEffect, useNavigation } from "@react-navigation/native";
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { LinearGradient } from "expo-linear-gradient";
@@ -135,7 +135,7 @@ export const SponsorGamesScreen = () => {
 
   return (
     <View style={styles.root}>
-      <SystemBars style="light" />
+      <StatusBar style="light" />
       <LinearGradient colors={["#0d2818", "#0f3d20", "#155e2f"]} style={[styles.header, { paddingTop: insets.top + 8 }]}>
         <View style={styles.headerRow}>
           <View>

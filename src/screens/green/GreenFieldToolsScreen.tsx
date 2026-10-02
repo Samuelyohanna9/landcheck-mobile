@@ -9,6 +9,7 @@ import { buildSponsorAgentQrSheetUrl, fetchSponsorAgentQrUnits, fetchTreePhotoDa
 import { getErrorMessage } from "../../api/client";
 import { EmptyState } from "../../components/EmptyState";
 import { DateField } from "../../components/DateField";
+import { GreenLoadingAnimation } from "../../components/GreenLoadingAnimation";
 import { GreenTreeCaptureMap } from "../../components/GreenTreeCaptureMap";
 import { MetricTile } from "../../components/MetricTile";
 import { PrimaryButton } from "../../components/PrimaryButton";
@@ -2945,9 +2946,7 @@ export const GreenFieldToolsScreen = () => {
       >
         <View style={styles.plantingOverlay}>
           <View style={styles.plantingModal}>
-            <View style={styles.plantingCircle}>
-              <ActivityIndicator size="large" color={colors.primaryDark} />
-            </View>
+            <GreenLoadingAnimation size="small" />
             <Text style={styles.plantingTitle}>Capturing GPS</Text>
             <Text style={styles.plantingMessage}>Getting your current location, please hold still...</Text>
           </View>
@@ -2957,9 +2956,7 @@ export const GreenFieldToolsScreen = () => {
         <View style={styles.plantingOverlay}>
           <View style={styles.plantingModal}>
             {plantingFlowState === "loading" ? (
-              <View style={styles.plantingCircle}>
-                <ActivityIndicator size="large" color={colors.primaryDark} />
-              </View>
+              <GreenLoadingAnimation size="small" />
             ) : (
               <View style={[styles.plantingCircle, styles.plantingCircleSuccess]}>
                 <Ionicons name="checkmark" size={30} color={colors.inverseText} />

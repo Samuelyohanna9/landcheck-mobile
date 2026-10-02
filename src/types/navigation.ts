@@ -3,6 +3,7 @@ export type AuthRoute = "field" | "sponsor";
 export type RootStackParamList = {
   AuthRouteSelect: undefined;
   Login: { authRoute?: AuthRoute } | undefined;
+  SponsorClaimAccount: { sponsorId: number; email: string };
   PrivacyConsent: undefined;
   Intro: undefined;
   GreenApp: undefined;

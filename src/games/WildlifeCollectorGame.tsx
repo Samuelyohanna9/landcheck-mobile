@@ -20,7 +20,7 @@ import {
   View, Text, ScrollView, Pressable, StyleSheet,
   Alert, Modal, Animated, PanResponder, Vibration,
 } from "react-native";
-import { SystemBars } from "react-native-edge-to-edge";
+import { StatusBar } from "expo-status-bar";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { LinearGradient } from "expo-linear-gradient";
 import { Ionicons } from "@expo/vector-icons";
@@ -432,7 +432,7 @@ export const WildlifeCollectorGame = () => {
 
   return (
     <View style={s.root}>
-      <SystemBars style="light" />
+      <StatusBar style="light" />
       <LinearGradient colors={["#4a1d96", "#5b21b6", "#7c3aed"]} style={[s.header, { paddingTop: insets.top + 8 }]}>
         <View style={s.headerRow}>
           <Pressable onPress={() => navigation.goBack()} style={s.backBtn}>

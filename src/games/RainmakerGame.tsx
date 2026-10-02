@@ -19,7 +19,7 @@ import {
   View, Text, Pressable, StyleSheet, Animated, PanResponder,
   Dimensions, Vibration, Alert,
 } from "react-native";
-import { SystemBars } from "react-native-edge-to-edge";
+import { StatusBar } from "expo-status-bar";
 import { LinearGradient } from "expo-linear-gradient";
 import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -251,7 +251,7 @@ export const RainmakerGame = () => {
 
   return (
     <View style={s.root}>
-      <SystemBars style="light" />
+      <StatusBar style="light" />
       <LinearGradient colors={["#0c4a6e", "#0369a1", "#7dd3fc"]} style={[s.header, { paddingTop: insets.top + 8 }]}>
         <View style={s.headerRow}>
           <Pressable onPress={() => { stopGame(); navigation.goBack(); }} style={s.back}>
