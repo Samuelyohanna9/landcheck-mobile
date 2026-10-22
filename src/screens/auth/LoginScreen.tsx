@@ -1,75 +1,21 @@
 import { Ionicons } from "@expo/vector-icons";
 import { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { useEffect, useMemo, useState } from "react";
+import { Image } from "expo-image";
 import { Alert, KeyboardAvoidingView, Linking, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { LinearGradient } from "expo-linear-gradient";
-import { BrandMark } from "../../components/BrandMark";
-import { PrimaryButton } from "../../components/PrimaryButton";
-import { StatusChip } from "../../components/StatusChip";
-import { requestSponsorPasswordReset } from "../../api/auth";
-import { useAuth } from "../../context/AuthContext";
+import { requestFieldPasswordReset, requestSponsorPasswordReset } from "../../api/auth";
 import { api, getErrorMessage } from "../../api/client";
-import { APP_NAME } from "../../config/env";
-import { colors, radii, spacing } from "../../theme/tokens";
+import { useAuth } from "../../context/AuthContext";
 import type { AuthRoute, RootStackParamList } from "../../types/navigation";
 
 type Props = NativeStackScreenProps<RootStackParamList, "Login">;
 
-type RouteCopy = {
-  eyebrow: string;
-  badge: string;
-  title: string;
-  subtitle: string;
-  audienceTitle: string;
-  audienceItems: string[];
-  guidanceItems: string[];
-  icon: keyof typeof Ionicons.glyphMap;
-};
-
-const ROUTE_COPY: Record<AuthRoute, RouteCopy> = {
-  sponsor: {
-    eyebrow: "Public sponsor route",
-    badge: "Sponsor access",
-    title: "Sponsor trees and follow verified impact",
-    subtitle: "For individuals and organizations supporting approved public tree projects through secure online sponsorship.",
-    audienceTitle: "Who this route is for",
-    audienceItems: [
-      "People or organizations sponsoring trees with their own account.",
-      "Users who want project selection, payment, map evidence, and maintenance updates.",
-      "Supporters who need a personal sponsor profile before any payment is made.",
-    ],
-    guidanceItems: [
-      "Create an account first, then choose a public sponsor project.",
-      "Use your email and password to return later and track sponsored trees.",
-      "Payments and evidence may be reviewed by the LandCheck Green admin team.",
-    ],
-    icon: "leaf-outline",
-  },
-  field: {
-    eyebrow: "Partner field route",
-    badge: "Field access",
-    title: "Sign in for field capture and assigned work",
-    subtitle: "For verified agents, supervisors, and partner staff already onboarded in LandCheck Work by an organization admin.",
-    audienceTitle: "Who this route is for",
-    audienceItems: [
-      "Agents or supervisors already issued a username and password in LandCheck Work.",
-      "Users capturing field evidence, plot data, tree records, reviews, or assigned tasks.",
-      "Partner staff working under an organization or sponsor project workflow.",
-    ],
-    guidanceItems: [
-      "No sign up happens on this route.",
-      "Use the exact username and password already assigned by your organization.",
-      `By continuing, you confirm you are authorized to access ${APP_NAME} field data for your organization or project.`,
-    ],
-    icon: "compass-outline",
-  },
-};
+const LANDCHECK_WORDMARK = require("../../../assets/landcheck-wordmark.png");
 
 export const LoginScreen = ({ navigation, route }: Props) => {
   const { signIn, signInSponsor, signUpSponsor } = useAuth();
-  const authRoute = route.params?.authRoute ?? "sponsor";
-  const routeCopy = ROUTE_COPY[authRoute];
+  const [authRoute, setAuthRoute] = useState<AuthRoute>(route.params?.authRoute ?? "field");
   const [sponsorSignup, setSponsorSignup] = useState(false);
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
@@ -81,53 +27,31 @@ export const LoginScreen = ({ navigation, route }: Props) => {
   const [showPassword, setShowPassword] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [requestingReset, setRequestingReset] = useState(false);
+  const [fieldResetOpen, setFieldResetOpen] = useState(false);
+  const [fieldResetEmail, setFieldResetEmail] = useState("");
+  const [resetMessage, setResetMessage] = useState("");
   const [error, setError] = useState("");
   const [referredByCode, setReferredByCode] = useState("");
 
-  const openSponsorRoute = () => {
+  const switchRoute = (nextRoute: AuthRoute) => {
     setError("");
     setShowPassword(false);
     setPassword("");
-    navigation.replace("Login", { authRoute: "sponsor" });
-  };
-
-  const openFieldRoute = () => {
-    setError("");
     setSponsorSignup(false);
-    setShowPassword(false);
-    setPassword("");
-    navigation.replace("Login", { authRoute: "field" });
+    setFieldResetOpen(false);
+    setResetMessage("");
+    setAuthRoute(nextRoute);
   };
 
   useEffect(() => {
-    // Check initial url
-    Linking.getInitialURL().then((url) => {
-      if (url) {
-        handleDeepLink(url);
-      }
-    });
-
-    // Check incoming urls
-    const subscription = Linking.addEventListener("url", ({ url }) => {
-      if (url) {
-        handleDeepLink(url);
-      }
-    });
-
-    return () => {
-      subscription.remove();
-    };
-  }, []);
-
-  const handleDeepLink = (url: string) => {
-    try {
-      console.log("Deep link received: ", url);
-      const query = url.split("?")[1];
-      if (query) {
+    const handleDeepLink = (url: string) => {
+      try {
+        const query = url.split("?")[1];
+        if (!query) return;
         const parsed: Record<string, string> = {};
-        for (const p of query.split("&")) {
-          const [key, val] = p.split("=");
-          if (key && val) parsed[key] = decodeURIComponent(val);
+        for (const part of query.split("&")) {
+          const [key, value] = part.split("=");
+          if (key && value) parsed[key] = decodeURIComponent(value);
         }
         if (parsed.sponsor_id && parsed.email) {
           navigation.navigate("SponsorClaimAccount", {
@@ -137,15 +61,22 @@ export const LoginScreen = ({ navigation, route }: Props) => {
           return;
         }
         if (parsed.ref) {
+          setAuthRoute("sponsor");
           setReferredByCode(parsed.ref);
           setSponsorSignup(true);
           setError("");
         }
+      } catch (err) {
+        console.error("Failed to parse deep link: ", err);
       }
-    } catch (err) {
-      console.error("Failed to parse deep link: ", err);
-    }
-  };
+    };
+
+    void Linking.getInitialURL().then((url) => {
+      if (url) handleDeepLink(url);
+    });
+    const subscription = Linking.addEventListener("url", ({ url }) => handleDeepLink(url));
+    return () => subscription.remove();
+  }, [navigation]);
 
   const formTitle = useMemo(() => {
     if (authRoute === "field") return "Field work login";
@@ -154,11 +85,11 @@ export const LoginScreen = ({ navigation, route }: Props) => {
 
   const formSubtitle = useMemo(() => {
     if (authRoute === "field") {
-      return "Use the same username and password already assigned in LandCheck Work.";
+      return "Use the username and password already assigned in LandCheck Work.";
     }
     return sponsorSignup
       ? "Create your sponsor profile first, then choose any public project and pay online."
-      : "Sign in to your sponsor account to track funded trees, map evidence, and verified updates.";
+      : "Sign in to track sponsored trees, verified field evidence, and live impact.";
   }, [authRoute, sponsorSignup]);
 
   const onSubmit = async () => {
@@ -183,7 +114,7 @@ export const LoginScreen = ({ navigation, route }: Props) => {
             event_type: "sponsor_signup",
             actor: sponsorName || sponsorEmail,
             message: `Sponsor ${sponsorName} (${sponsorEmail}) signed up successfully via mobile app`,
-            details: { email: sponsorEmail, account_type: sponsorAccountType, referral_code: referredByCode || null }
+            details: { email: sponsorEmail, account_type: sponsorAccountType, referral_code: referredByCode || null },
           });
         } catch (logErr) {
           console.log("Failed to post public log:", logErr);
@@ -195,8 +126,8 @@ export const LoginScreen = ({ navigation, route }: Props) => {
             source: "sponsor_app",
             event_type: "sponsor_login",
             actor: sponsorEmail,
-            message: `Sponsor logged in successfully via mobile app`,
-            details: { email: sponsorEmail }
+            message: "Sponsor logged in successfully via mobile app",
+            details: { email: sponsorEmail },
           });
         } catch (logErr) {
           console.log("Failed to post public log:", logErr);
@@ -213,6 +144,7 @@ export const LoginScreen = ({ navigation, route }: Props) => {
     if (authRoute !== "sponsor" || sponsorSignup) return;
     setRequestingReset(true);
     setError("");
+    setResetMessage("");
     try {
       const message = await requestSponsorPasswordReset(sponsorEmail);
       Alert.alert("Reset email sent", message);
@@ -223,298 +155,287 @@ export const LoginScreen = ({ navigation, route }: Props) => {
     }
   };
 
+  const onRequestFieldReset = async () => {
+    setRequestingReset(true);
+    setError("");
+    setResetMessage("");
+    try {
+      const message = await requestFieldPasswordReset(fieldResetEmail);
+      setResetMessage(message);
+    } catch (err) {
+      setError(getErrorMessage(err, "Unable to send reset email."));
+    } finally {
+      setRequestingReset(false);
+    }
+  };
+
+  const isFieldRoute = authRoute === "field";
+
   return (
-    <LinearGradient
-      colors={authRoute === "field" ? ["#16211a", "#0f1712"] : ["#eef8ef", "#d9f0dc", "#f7fbf7"]}
-      start={{ x: 0, y: 0 }}
-      end={{ x: 1, y: 1 }}
-      style={styles.gradient}
-    >
-      <SafeAreaView style={styles.safe} edges={["top"]}>
-        <KeyboardAvoidingView style={styles.keyboard} behavior={Platform.OS === "ios" ? "padding" : undefined}>
-          <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
-            <View style={[styles.topBar, authRoute === "sponsor" && styles.topBarSponsor]}>
-              {authRoute === "field" ? (
-                <Pressable onPress={openSponsorRoute} style={({ pressed }) => [styles.backButton, pressed && styles.backButtonPressed]}>
-                  <Ionicons name="arrow-back" size={18} color={colors.primaryDark} />
-                  <Text style={styles.backText}>Sponsor access</Text>
-                </Pressable>
-              ) : (
-                <View style={styles.publicRouteLabel}>
-                  <Ionicons name="globe-outline" size={15} color="#a6813c" />
-                  <Text style={styles.publicRouteLabelText}>Public sponsor route</Text>
-                </View>
-              )}
-              <StatusChip label={routeCopy.badge} tone="online" />
+    <View style={styles.page}>
+      <View style={styles.topAccent} />
+      <SafeAreaView style={styles.safe} edges={["top", "bottom"]}>
+        <KeyboardAvoidingView style={styles.keyboard} behavior={Platform.OS === "ios" ? "padding" : "height"}>
+          <ScrollView
+            contentContainerStyle={styles.content}
+            keyboardShouldPersistTaps="handled"
+            showsVerticalScrollIndicator={false}
+          >
+            <View style={styles.brandHeader}>
+              <Image source={LANDCHECK_WORDMARK} contentFit="contain" style={styles.wordmark} accessibilityLabel="LandCheck" />
             </View>
+            <View style={styles.brandDivider} />
 
-            {authRoute === "field" ? (
-              <>
-                <View style={styles.heroCard}>
-                  <View style={styles.heroHead}>
-                    <View style={styles.brandTile}>
-                      <BrandMark size={48} />
-                    </View>
-                    <View style={styles.heroText}>
-                      <Text style={styles.heroEyebrow}>{routeCopy.eyebrow}</Text>
-                      <Text style={styles.title}>{routeCopy.title}</Text>
-                      <Text style={styles.subtitle}>{routeCopy.subtitle}</Text>
-                    </View>
-                    <View style={styles.heroOrb}>
-                      <Ionicons name={routeCopy.icon} size={22} color={colors.warning} />
-                    </View>
+            <View style={styles.loginCard}>
+              <View style={styles.routeSwitcher} accessibilityRole="tablist">
+                <Pressable
+                  accessibilityRole="tab"
+                  accessibilityState={{ selected: !isFieldRoute }}
+                  onPress={() => switchRoute("sponsor")}
+                  style={({ pressed }) => [styles.routeOption, !isFieldRoute && styles.routeOptionActive, pressed && styles.pressed]}
+                >
+                  <View style={[styles.routeIcon, !isFieldRoute && styles.routeIconActive]}>
+                    <Ionicons name="leaf-outline" size={15} color={!isFieldRoute ? "#ffffff" : "#1a8f5a"} />
                   </View>
-                </View>
-
-                <View style={styles.guidanceCard}>
-                  <Text style={styles.guidanceTitle}>{routeCopy.audienceTitle}</Text>
-                  <View style={styles.guidanceList}>
-                    {routeCopy.audienceItems.map((item) => (
-                      <View key={`audience-${item}`} style={styles.guidanceRow}>
-                        <View style={styles.guidanceDot} />
-                        <Text style={styles.guidanceText}>{item}</Text>
-                      </View>
-                    ))}
+                  <View style={styles.routeCopy}>
+                    <Text style={[styles.routeTitle, !isFieldRoute && styles.routeTitleActive]}>Sponsor Portal</Text>
+                    <Text style={[styles.routeBadge, !isFieldRoute && styles.routeBadgeActive]}>PUBLIC</Text>
                   </View>
-                  <View style={styles.guidanceDivider} />
-                  <Text style={styles.guidanceTitle}>Before you continue</Text>
-                  <View style={styles.guidanceList}>
-                    {routeCopy.guidanceItems.map((item) => (
-                      <View key={`guide-${item}`} style={styles.guidanceRow}>
-                        <Ionicons name="checkmark-circle-outline" size={16} color={colors.primaryDark} />
-                        <Text style={styles.guidanceText}>{item}</Text>
-                      </View>
-                    ))}
+                </Pressable>
+                <Pressable
+                  accessibilityRole="tab"
+                  accessibilityState={{ selected: isFieldRoute }}
+                  onPress={() => switchRoute("field")}
+                  style={({ pressed }) => [styles.routeOption, isFieldRoute && styles.routeOptionActive, pressed && styles.pressed]}
+                >
+                  <View style={[styles.routeIcon, isFieldRoute && styles.routeIconActive]}>
+                    <Ionicons name="compass-outline" size={15} color={isFieldRoute ? "#ffffff" : "#1a8f5a"} />
                   </View>
-                </View>
-              </>
-            ) : (
-              <View style={styles.brandHeader}>
-                <BrandMark size={44} />
-                <Text style={styles.brandHeaderTitle}>LandCheck Green</Text>
-                <Text style={styles.brandHeaderSubtitle}>
-                  {sponsorSignup
-                    ? "Create your sponsor profile to support verified restoration."
-                    : "Access your tree sponsorships and track live ecological impact."}
-                </Text>
+                  <View style={styles.routeCopy}>
+                    <Text style={[styles.routeTitle, isFieldRoute && styles.routeTitleActive]}>Field Agent Access</Text>
+                    <Text style={[styles.routeBadge, isFieldRoute && styles.routeBadgeActive]}>PARTNER</Text>
+                  </View>
+                </Pressable>
               </View>
-            )}
 
-            <View style={styles.formCard}>
-              <Text style={styles.formEyebrow}>{authRoute === "field" ? "Secure partner access" : sponsorSignup ? "Sponsor onboarding" : "Sponsor account access"}</Text>
-              <Text style={styles.formTitle}>{formTitle}</Text>
-              <Text style={styles.formSubtitle}>{formSubtitle}</Text>
+              <View style={styles.cardDivider} />
 
-              {authRoute === "field" ? (
-                <View style={styles.inputBlock}>
-                  <Text style={styles.label}>Username</Text>
-                  <TextInput
+              <View style={styles.form}>
+                <Text style={styles.eyebrow}>{isFieldRoute ? "FIELD AGENT ACCESS" : "SPONSOR PORTAL"}</Text>
+                <Text style={styles.formTitle}>{formTitle}</Text>
+                <Text style={styles.formSubtitle}>{formSubtitle}</Text>
+
+                {isFieldRoute ? (
+                  <InputField
+                    label="USERNAME"
                     value={username}
                     onChangeText={setUsername}
+                    placeholder="Enter username"
                     autoCapitalize="none"
                     autoCorrect={false}
-                    placeholder="Enter username"
-                    placeholderTextColor={colors.textMuted}
-                    style={styles.input}
                   />
-                </View>
-              ) : (
-                <>
-                  {sponsorSignup ? (
-                    <>
-                      <View style={styles.inputBlock}>
-                        <Text style={styles.label}>Full name</Text>
-                        <TextInput
-                          value={sponsorName}
-                          onChangeText={setSponsorName}
-                          placeholder="Enter full name"
-                          placeholderTextColor={colors.textMuted}
-                          style={styles.input}
-                        />
-                      </View>
-
-                      <View style={styles.inputBlock}>
-                        <Text style={styles.label}>Account type</Text>
-                        <View style={styles.segmentRow}>
+                ) : sponsorSignup ? (
+                  <>
+                    <InputField label="FULL NAME" value={sponsorName} onChangeText={setSponsorName} placeholder="Enter full name" />
+                    <View style={styles.inputBlock}>
+                      <Text style={styles.label}>ACCOUNT TYPE</Text>
+                      <View style={styles.accountTypeRow}>
+                        {(["individual", "organization"] as const).map((type) => (
                           <Pressable
-                            onPress={() => setSponsorAccountType("individual")}
-                            style={[styles.segmentButton, sponsorAccountType === "individual" && styles.segmentButtonActive]}
+                            key={type}
+                            onPress={() => setSponsorAccountType(type)}
+                            style={[styles.accountTypeButton, sponsorAccountType === type && styles.accountTypeButtonActive]}
                           >
-                            <Text style={[styles.segmentLabel, sponsorAccountType === "individual" && styles.segmentLabelActive]}>Individual</Text>
+                            <Text style={[styles.accountTypeText, sponsorAccountType === type && styles.accountTypeTextActive]}>
+                              {type === "individual" ? "Individual" : "Organization"}
+                            </Text>
                           </Pressable>
-                          <Pressable
-                            onPress={() => setSponsorAccountType("organization")}
-                            style={[styles.segmentButton, sponsorAccountType === "organization" && styles.segmentButtonActive]}
-                          >
-                            <Text style={[styles.segmentLabel, sponsorAccountType === "organization" && styles.segmentLabelActive]}>Organization</Text>
-                          </Pressable>
-                        </View>
+                        ))}
                       </View>
-
-                      {sponsorAccountType === "organization" ? (
-                        <View style={styles.inputBlock}>
-                          <Text style={styles.label}>Organization name</Text>
-                          <TextInput
-                            value={sponsorOrgName}
-                            onChangeText={setSponsorOrgName}
-                            placeholder="Enter organization name"
-                            placeholderTextColor={colors.textMuted}
-                            style={styles.input}
-                          />
-                        </View>
-                      ) : null}
-                    </>
-                  ) : null}
-
-                  <View style={styles.inputBlock}>
-                    <Text style={styles.label}>Email</Text>
-                    <TextInput
+                    </View>
+                    {sponsorAccountType === "organization" ? (
+                      <InputField
+                        label="ORGANIZATION NAME"
+                        value={sponsorOrgName}
+                        onChangeText={setSponsorOrgName}
+                        placeholder="Enter organization name"
+                      />
+                    ) : null}
+                    <InputField
+                      label="EMAIL"
                       value={sponsorEmail}
                       onChangeText={setSponsorEmail}
+                      placeholder="Enter email address"
                       autoCapitalize="none"
                       autoCorrect={false}
                       keyboardType="email-address"
-                      placeholder="Enter email address"
-                      placeholderTextColor={colors.textMuted}
-                      style={styles.input}
                     />
-                  </View>
-
-                  {sponsorSignup ? (
-                    <>
-                      <View style={styles.inputBlock}>
-                        <Text style={styles.label}>Phone</Text>
-                        <TextInput
-                          value={sponsorPhone}
-                          onChangeText={setSponsorPhone}
-                          keyboardType="phone-pad"
-                          placeholder="Enter phone number"
-                          placeholderTextColor={colors.textMuted}
-                          style={styles.input}
-                        />
-                      </View>
-
-                      <View style={styles.inputBlock}>
-                        <Text style={styles.label}>Referral Code (Optional)</Text>
-                        <TextInput
-                          value={referredByCode}
-                          onChangeText={setReferredByCode}
-                          autoCapitalize="characters"
-                          placeholder="e.g. LC-REF-123-ABCD"
-                          placeholderTextColor={colors.textMuted}
-                          style={styles.input}
-                        />
-                      </View>
-                    </>
-                  ) : null}
-                </>
-              )}
-
-              <View style={styles.inputBlock}>
-                <Text style={styles.label}>Password</Text>
-                <View style={styles.passwordWrap}>
-                  <TextInput
-                    value={password}
-                    onChangeText={setPassword}
-                    secureTextEntry={!showPassword}
+                    <InputField
+                      label="PHONE"
+                      value={sponsorPhone}
+                      onChangeText={setSponsorPhone}
+                      placeholder="Enter phone number"
+                      keyboardType="phone-pad"
+                    />
+                    <InputField
+                      label="REFERRAL CODE (OPTIONAL)"
+                      value={referredByCode}
+                      onChangeText={setReferredByCode}
+                      placeholder="e.g. LC-REF-123-ABCD"
+                      autoCapitalize="characters"
+                    />
+                  </>
+                ) : (
+                  <InputField
+                    label="EMAIL"
+                    value={sponsorEmail}
+                    onChangeText={setSponsorEmail}
+                    placeholder="Enter email address"
                     autoCapitalize="none"
-                    placeholder={authRoute === "field" ? "Enter assigned password" : "Create or enter password"}
-                    placeholderTextColor={colors.textMuted}
-                    style={styles.passwordInput}
+                    autoCorrect={false}
+                    keyboardType="email-address"
                   />
-                  <Pressable onPress={() => setShowPassword((prev) => !prev)} style={styles.eyeButton}>
-                    <Ionicons name={showPassword ? "eye-off-outline" : "eye-outline"} size={20} color={colors.textSoft} />
-                  </Pressable>
-                </View>
-              </View>
+                )}
 
-              {authRoute === "sponsor" && !sponsorSignup ? (
-                <View style={styles.supportRow}>
-                  <Pressable
-                    onPress={() => void onRequestSponsorReset()}
-                    disabled={requestingReset || submitting}
-                    style={({ pressed }) => [
-                      styles.supportButton,
-                      (pressed || requestingReset || submitting) && styles.supportButtonPressed,
-                    ]}
-                  >
-                    <Ionicons name="mail-open-outline" size={16} color={colors.primaryDark} />
-                    <Text style={styles.supportButtonText}>{requestingReset ? "Sending reset email..." : "Forgot password? Send reset email"}</Text>
-                  </Pressable>
-                  <Text style={styles.supportHint}>Enter your sponsor email above first.</Text>
-                </View>
-              ) : null}
-
-              {error ? <Text style={styles.error}>{error}</Text> : null}
-
-              <PrimaryButton
-                label={
-                  submitting
-                    ? authRoute === "field"
-                      ? "Signing in..."
-                      : sponsorSignup
-                        ? "Creating sponsor account..."
-                        : "Signing in..."
-                    : authRoute === "field"
-                      ? "Open Field Route"
-                      : sponsorSignup
-                        ? "Create Sponsor Account"
-                        : "Sign In to Sponsor Route"
-                }
-                onPress={onSubmit}
-                disabled={submitting || requestingReset}
-                accentColors={authRoute === "field" ? [colors.warning, "#b45f04"] : undefined}
-              />
-
-              {authRoute === "sponsor" ? (
-                <View style={styles.toggleFooter}>
-                  {sponsorSignup ? (
-                    <Pressable onPress={() => { setSponsorSignup(false); setError(""); }} style={styles.toggleFooterLink}>
-                      <Text style={styles.toggleFooterText}>
-                        Already have an account? <Text style={styles.toggleFooterHighlight}>Sign in</Text>
-                      </Text>
+                <View style={styles.inputBlock}>
+                  <Text style={styles.label}>PASSWORD</Text>
+                  <View style={styles.passwordWrap}>
+                    <TextInput
+                      value={password}
+                      onChangeText={setPassword}
+                      secureTextEntry={!showPassword}
+                      autoCapitalize="none"
+                      placeholder={isFieldRoute ? "Enter assigned password" : sponsorSignup ? "Create password" : "Enter password"}
+                      placeholderTextColor="#8192a4"
+                      style={styles.passwordInput}
+                    />
+                    <Pressable
+                      accessibilityRole="button"
+                      accessibilityLabel={showPassword ? "Hide password" : "Show password"}
+                      onPress={() => setShowPassword((current) => !current)}
+                      style={styles.eyeButton}
+                    >
+                      <Ionicons name={showPassword ? "eye-off-outline" : "eye-outline"} size={19} color="#607b91" />
                     </Pressable>
-                  ) : (
-                    <Pressable onPress={() => { setSponsorSignup(true); setError(""); }} style={styles.toggleFooterLink}>
-                      <Text style={styles.toggleFooterText}>
-                        Don't have an account? <Text style={styles.toggleFooterHighlight}>Sign up</Text>
-                      </Text>
-                    </Pressable>
-                  )}
+                  </View>
                 </View>
-              ) : null}
-            </View>
 
-            {authRoute === "sponsor" ? (
-              <View style={styles.altRouteCard}>
-                <Text style={styles.altRouteEyebrow}>Partner staff only</Text>
-                <Text style={styles.altRouteTitle}>Agent, NGO, or organization staff?</Text>
-                <Text style={styles.altRouteBody}>
-                  Sign in with the field credentials issued by your organization.
+                {isFieldRoute ? (
+                  <View style={styles.supportRow}>
+                    <Pressable
+                      onPress={() => {
+                        setFieldResetOpen((current) => !current);
+                        setError("");
+                        setResetMessage("");
+                      }}
+                      disabled={submitting || requestingReset}
+                    >
+                      <Text style={styles.supportLink}>{fieldResetOpen ? "Close reset form" : "Forgot password?"}</Text>
+                    </Pressable>
+                    <Text style={styles.supportHint}>Use the email linked to your LandCheck Work account.</Text>
+                    {fieldResetOpen ? (
+                      <View style={styles.resetPanel}>
+                        <InputField
+                          label="EMAIL FOR RESET"
+                          value={fieldResetEmail}
+                          onChangeText={setFieldResetEmail}
+                          placeholder="Enter your work email"
+                          autoCapitalize="none"
+                          autoCorrect={false}
+                          keyboardType="email-address"
+                        />
+                        <Pressable
+                          onPress={() => void onRequestFieldReset()}
+                          disabled={requestingReset || submitting}
+                          style={({ pressed }) => [styles.resetButton, pressed && styles.submitPressed]}
+                        >
+                          <Text style={styles.resetButtonText}>{requestingReset ? "SENDING..." : "SEND RESET LINK"}</Text>
+                        </Pressable>
+                        {resetMessage ? <Text style={styles.resetMessage}>{resetMessage}</Text> : null}
+                      </View>
+                    ) : null}
+                  </View>
+                ) : authRoute === "sponsor" && !sponsorSignup ? (
+                  <View style={styles.supportRow}>
+                    <Pressable onPress={() => void onRequestSponsorReset()} disabled={requestingReset || submitting}>
+                      <Text style={styles.supportLink}>{requestingReset ? "Sending reset email..." : "Forgot password?"}</Text>
+                    </Pressable>
+                    <Text style={styles.supportHint}>Enter your email above first.</Text>
+                  </View>
+                ) : null}
+
+                {error ? <Text style={styles.error}>{error}</Text> : null}
+
+                <Pressable
+                  onPress={() => void onSubmit()}
+                  disabled={submitting || requestingReset}
+                  style={({ pressed }) => [styles.submit, (pressed || submitting || requestingReset) && styles.submitPressed]}
+                >
+                  <Text style={styles.submitText}>
+                    {submitting ? (sponsorSignup ? "CREATING ACCOUNT..." : "SIGNING IN...") : sponsorSignup ? "CREATE ACCOUNT" : "LOGIN"}
+                  </Text>
+                </Pressable>
+
+                {authRoute === "sponsor" ? (
+                  <Pressable onPress={() => { setSponsorSignup((current) => !current); setError(""); }} style={styles.signupLinkWrap}>
+                    <Text style={styles.signupText}>
+                      {sponsorSignup ? "Already have an account? " : "Don't have an account? "}
+                      <Text style={styles.signupHighlight}>{sponsorSignup ? "Sign in" : "Create sponsor account"}</Text>
+                    </Text>
+                  </Pressable>
+                ) : null}
+
+                <Text style={styles.privacyText}>
+                  By continuing, you agree to handle project, GPS, photo, and field records only when authorized. <Text style={styles.privacyLink}>Privacy policy</Text>
                 </Text>
-                <Pressable onPress={openFieldRoute} style={({ pressed }) => [styles.altRouteButton, pressed && styles.altRouteButtonPressed]}>
-                  <Ionicons name="compass-outline" size={18} color={colors.primaryDark} />
-                  <Text style={styles.altRouteButtonText}>Open field staff login</Text>
-                </Pressable>
               </View>
-            ) : (
-              <View style={styles.routeSwapInline}>
-                <Text style={styles.routeSwapText}>Want to sponsor trees instead?</Text>
-                <Pressable onPress={openSponsorRoute} style={styles.routeSwapLink}>
-                  <Text style={styles.routeSwapLinkText}>Go to sponsor sign in</Text>
-                </Pressable>
-              </View>
-            )}
+            </View>
           </ScrollView>
         </KeyboardAvoidingView>
       </SafeAreaView>
-    </LinearGradient>
+    </View>
   );
 };
 
+type InputFieldProps = {
+  label: string;
+  value: string;
+  onChangeText: (value: string) => void;
+  placeholder: string;
+  autoCapitalize?: "none" | "sentences" | "words" | "characters";
+  autoCorrect?: boolean;
+  keyboardType?: "default" | "email-address" | "phone-pad";
+};
+
+const InputField = ({ label, value, onChangeText, placeholder, autoCapitalize, autoCorrect, keyboardType = "default" }: InputFieldProps) => (
+  <View style={styles.inputBlock}>
+    <Text style={styles.label}>{label}</Text>
+    <TextInput
+      value={value}
+      onChangeText={onChangeText}
+      autoCapitalize={autoCapitalize}
+      autoCorrect={autoCorrect}
+      keyboardType={keyboardType}
+      placeholder={placeholder}
+      placeholderTextColor="#8192a4"
+      style={styles.input}
+    />
+  </View>
+);
+
 const styles = StyleSheet.create({
-  gradient: {
+  page: {
     flex: 1,
+    backgroundColor: "#f6f7fb",
+  },
+  topAccent: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    height: 2,
+    zIndex: 2,
+    backgroundColor: "#0b686b",
   },
   safe: {
     flex: 1,
@@ -523,430 +444,287 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   content: {
-    paddingHorizontal: spacing.lg,
-    paddingTop: spacing.sm,
-    gap: spacing.sm,
-    paddingBottom: spacing.sm,
-  },
-  topBar: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: spacing.sm,
-  },
-  topBarSponsor: {
-    justifyContent: "flex-end",
-  },
-  backButton: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-    paddingHorizontal: 14,
-    paddingVertical: 11,
-    borderRadius: radii.pill,
-    backgroundColor: "rgba(255,255,255,0.88)",
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
-  backButtonPressed: {
-    opacity: 0.9,
-  },
-  backText: {
-    color: colors.primaryDark,
-    fontSize: 13,
-    fontWeight: "800",
-  },
-  publicRouteLabel: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: radii.pill,
-    backgroundColor: "#fbf7ee",
-    borderWidth: 1,
-    borderColor: "rgba(197,160,89,0.18)",
-  },
-  publicRouteLabelText: {
-    color: "#a6813c",
-    fontSize: 12,
-    fontWeight: "900",
-    letterSpacing: 0.3,
-  },
-  // Field-only hero (see the authRoute === "field" branch above) - deliberately dark/utilitarian
-  // with an amber accent, rather than sponsor's soft green/white "trust" treatment, and with no
-  // decorative glow blob.
-  heroCard: {
-    position: "relative",
-    overflow: "hidden",
-    gap: spacing.md,
-    padding: spacing.lg,
-    borderRadius: radii.xl,
-    backgroundColor: "rgba(255,255,255,0.06)",
-    borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.12)",
-    shadowColor: "rgba(0,0,0,0.4)",
-    shadowOpacity: 0.3,
-    shadowRadius: 20,
-    shadowOffset: { width: 0, height: 8 },
-    elevation: 4,
-  },
-  heroHead: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: spacing.md,
-  },
-  brandTile: {
-    width: 78,
-    height: 78,
-    borderRadius: 24,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: "#ffffff",
-    borderWidth: 1,
-    borderColor: "rgba(16,91,44,0.10)",
-  },
-  heroText: {
-    flex: 1,
-    gap: 6,
-  },
-  heroEyebrow: {
-    color: colors.warning,
-    fontSize: 12,
-    fontWeight: "900",
-    letterSpacing: 0.7,
-    textTransform: "uppercase",
-  },
-  heroOrb: {
-    width: 50,
-    height: 50,
-    borderRadius: 25,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: "rgba(217,119,6,0.16)",
-  },
-  title: {
-    color: colors.inverseText,
-    fontSize: 27,
-    lineHeight: 33,
-    fontWeight: "900",
-    letterSpacing: -0.7,
-  },
-  subtitle: {
-    color: "rgba(255,255,255,0.72)",
-    fontSize: 14,
-    lineHeight: 21,
-  },
-  guidanceCard: {
-    gap: spacing.sm,
-    padding: spacing.md,
-    borderRadius: radii.xl,
-    backgroundColor: "#ffffff",
-    borderWidth: 1,
-    borderColor: colors.border,
-    shadowColor: colors.shadow,
-    shadowOpacity: 0.08,
-    shadowRadius: 12,
-    shadowOffset: { width: 0, height: 5 },
-    elevation: 3,
-  },
-  guidanceTitle: {
-    color: colors.text,
-    fontSize: 14,
-    fontWeight: "900",
-  },
-  guidanceList: {
-    gap: 10,
-  },
-  guidanceRow: {
-    flexDirection: "row",
-    alignItems: "flex-start",
-    gap: 10,
-  },
-  guidanceDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    marginTop: 6,
-    backgroundColor: colors.primary,
-  },
-  guidanceText: {
-    flex: 1,
-    color: colors.textMuted,
-    fontSize: 13,
-    lineHeight: 20,
-  },
-  guidanceDivider: {
-    height: 1,
-    backgroundColor: colors.divider,
-    marginVertical: 4,
-  },
-  formCard: {
-    gap: spacing.xs,
-    padding: spacing.sm + 4,
-    borderRadius: radii.xl,
-    backgroundColor: "#ffffff",
-    borderWidth: 1,
-    borderColor: colors.border,
-    shadowColor: colors.shadow,
-    shadowOpacity: 0.08,
-    shadowRadius: 12,
-    shadowOffset: { width: 0, height: 5 },
-    elevation: 3,
-  },
-  modeSwitch: {
-    flexDirection: "row",
-    gap: 10,
-    padding: 6,
-    borderRadius: radii.lg,
-    backgroundColor: colors.panelElevated,
-  },
-  modeButton: {
-    flex: 1,
-    minHeight: 46,
-    borderRadius: radii.lg,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  modeButtonActive: {
-    backgroundColor: colors.primaryDark,
-    shadowColor: colors.shadow,
-    shadowOpacity: 0.1,
-    shadowRadius: 6,
-    shadowOffset: { width: 0, height: 3 },
-    elevation: 2,
-  },
-  modeButtonText: {
-    color: colors.textMuted,
-    fontSize: 13,
-    fontWeight: "900",
-  },
-  modeButtonTextActive: {
-    color: colors.inverseText,
-  },
-  formEyebrow: {
-    color: colors.primaryDark,
-    fontSize: 12,
-    fontWeight: "900",
-    letterSpacing: 0.6,
-    textTransform: "uppercase",
-  },
-  formTitle: {
-    color: colors.text,
-    fontSize: 20,
-    lineHeight: 25,
-    fontWeight: "900",
-    letterSpacing: -0.45,
-  },
-  formSubtitle: {
-    color: colors.textSoft,
-    fontSize: 12.5,
-    lineHeight: 17,
-    marginBottom: 2,
-  },
-  inputBlock: {
-    gap: 4,
-  },
-  label: {
-    color: colors.text,
-    fontSize: 12,
-    fontWeight: "700",
-  },
-  input: {
-    minHeight: 44,
-    borderRadius: radii.lg,
-    borderWidth: 1,
-    borderColor: colors.border,
-    backgroundColor: colors.panelSoft,
-    paddingHorizontal: spacing.md,
-    color: colors.text,
-    fontSize: 15,
-  },
-  passwordWrap: {
-    minHeight: 44,
-    borderRadius: radii.lg,
-    borderWidth: 1,
-    borderColor: colors.border,
-    backgroundColor: colors.panelSoft,
-    paddingLeft: spacing.md,
-    paddingRight: spacing.sm,
-    flexDirection: "row",
-    alignItems: "center",
-  },
-  passwordInput: {
-    flex: 1,
-    color: colors.text,
-    fontSize: 15,
-  },
-  eyeButton: {
-    width: 40,
-    height: 40,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  supportRow: {
-    gap: 4,
-    marginTop: -2,
-  },
-  supportButton: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-    alignSelf: "flex-start",
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: radii.pill,
-    backgroundColor: colors.primarySoft,
-    borderWidth: 1,
-    borderColor: "rgba(16,91,44,0.10)",
-  },
-  supportButtonPressed: {
-    opacity: 0.72,
-  },
-  supportButtonText: {
-    color: colors.primaryDark,
-    fontSize: 12.5,
-    fontWeight: "800",
-  },
-  supportHint: {
-    color: colors.textSoft,
-    fontSize: 12,
-    lineHeight: 17,
-  },
-  segmentRow: {
-    flexDirection: "row",
-    gap: 10,
-  },
-  segmentButton: {
-    flex: 1,
-    minHeight: 48,
-    borderRadius: radii.lg,
-    borderWidth: 1,
-    borderColor: colors.border,
-    backgroundColor: colors.panelSoft,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  segmentButtonActive: {
-    backgroundColor: colors.primaryDark,
-    borderColor: colors.primaryDark,
-  },
-  segmentLabel: {
-    color: colors.text,
-    fontSize: 14,
-    fontWeight: "800",
-  },
-  segmentLabelActive: {
-    color: colors.inverseText,
-  },
-  error: {
-    color: colors.danger,
-    fontSize: 13,
-    lineHeight: 19,
+    flexGrow: 1,
+    paddingHorizontal: 10,
+    paddingTop: 8,
+    paddingBottom: 24,
   },
   brandHeader: {
     alignItems: "center",
     justifyContent: "center",
-    paddingVertical: spacing.xs,
-    gap: 2,
+    height: 58,
   },
-  brandHeaderTitle: {
-    color: colors.primaryDark,
-    fontSize: 21,
-    fontWeight: "900",
-    letterSpacing: -0.5,
-    marginTop: 2,
+  wordmark: {
+    width: 182,
+    height: 58,
   },
-  brandHeaderSubtitle: {
-    color: colors.textMuted,
-    fontSize: 12.5,
-    lineHeight: 16,
-    textAlign: "center",
-    paddingHorizontal: spacing.md,
+  brandDivider: {
+    height: 1,
+    marginHorizontal: 0,
+    backgroundColor: "#e1e5eb",
   },
-  toggleFooter: {
-    alignItems: "center",
-    marginTop: 2,
-    paddingVertical: 2,
-  },
-  toggleFooterLink: {
-    padding: spacing.xs,
-  },
-  toggleFooterText: {
-    color: colors.textSoft,
-    fontSize: 14,
-  },
-  toggleFooterHighlight: {
-    color: colors.primary,
-    fontWeight: "700",
-  },
-  altRouteCard: {
-    gap: 5,
-    padding: spacing.sm,
-    borderRadius: radii.xl,
-    backgroundColor: "rgba(255,255,255,0.92)",
+  loginCard: {
+    marginTop: 195,
+    padding: 16,
     borderWidth: 1,
-    borderColor: "rgba(22,103,58,0.12)",
-    shadowColor: colors.shadow,
-    shadowOpacity: 0.05,
-    shadowRadius: 10,
-    shadowOffset: { width: 0, height: 4 },
-    elevation: 2,
+    borderColor: "#e0e5eb",
+    borderRadius: 8,
+    backgroundColor: "#ffffff",
+    shadowColor: "#26384a",
+    shadowOpacity: 0.08,
+    shadowRadius: 14,
+    shadowOffset: { width: 0, height: 6 },
+    elevation: 3,
   },
-  altRouteEyebrow: {
-    color: colors.primaryDark,
-    fontSize: 10.5,
-    fontWeight: "900",
-    letterSpacing: 0.7,
-    textTransform: "uppercase",
+  routeSwitcher: {
+    flexDirection: "row",
+    gap: 4,
+    padding: 4,
+    borderWidth: 1,
+    borderColor: "#e6e9ef",
+    borderRadius: 8,
+    backgroundColor: "#f6f7fb",
   },
-  altRouteTitle: {
-    color: colors.text,
-    fontSize: 15,
-    lineHeight: 19,
-    fontWeight: "900",
-  },
-  altRouteBody: {
-    color: colors.textSoft,
-    fontSize: 12,
-    lineHeight: 16,
-  },
-  altRouteButton: {
-    minHeight: 44,
-    borderRadius: radii.lg,
-    borderWidth: 1.5,
-    borderColor: "rgba(22,103,58,0.18)",
-    backgroundColor: "#f4faf6",
-    paddingHorizontal: spacing.md,
+  routeOption: {
+    flex: 1,
+    minHeight: 50,
     flexDirection: "row",
     alignItems: "center",
+    gap: 8,
+    paddingHorizontal: 8,
+    borderRadius: 4,
+  },
+  routeOptionActive: {
+    backgroundColor: "#1a8f5a",
+  },
+  routeIcon: {
+    width: 28,
+    height: 28,
+    alignItems: "center",
     justifyContent: "center",
+    borderRadius: 6,
+    backgroundColor: "#e3f4eb",
+  },
+  routeIconActive: {
+    backgroundColor: "rgba(255,255,255,0.16)",
+  },
+  routeCopy: {
+    flex: 1,
+    minWidth: 0,
+    gap: 1,
+  },
+  routeTitle: {
+    color: "#526b82",
+    fontSize: 11,
+    fontWeight: "600",
+  },
+  routeTitleActive: {
+    color: "#ffffff",
+  },
+  routeBadge: {
+    color: "#7b95aa",
+    fontSize: 8,
+    fontWeight: "700",
+    letterSpacing: 1,
+  },
+  routeBadgeActive: {
+    color: "#d8f2e4",
+  },
+  cardDivider: {
+    height: 1,
+    marginVertical: 16,
+    backgroundColor: "#edf0f3",
+  },
+  form: {
     gap: 8,
   },
-  altRouteButtonPressed: {
-    opacity: 0.9,
+  eyebrow: {
+    color: "#0f6e44",
+    fontSize: 11,
+    fontWeight: "700",
+    letterSpacing: 1,
   },
-  altRouteButtonText: {
-    color: colors.primaryDark,
-    fontSize: 14,
-    fontWeight: "900",
+  formTitle: {
+    marginTop: 1,
+    color: "#323338",
+    fontSize: 21,
+    lineHeight: 27,
+    fontWeight: "500",
+    letterSpacing: -0.35,
   },
-  routeSwapInline: {
-    alignItems: "center",
-    gap: 6,
-    paddingVertical: spacing.xs,
-  },
-  routeSwapText: {
-    color: colors.textSoft,
+  formSubtitle: {
+    marginBottom: 8,
+    color: "#526b82",
     fontSize: 13,
+    lineHeight: 19,
   },
-  routeSwapLink: {
-    paddingHorizontal: 8,
-    paddingVertical: 6,
+  inputBlock: {
+    gap: 5,
   },
-  routeSwapLinkText: {
-    color: colors.primaryDark,
+  label: {
+    color: "#173f5f",
+    fontSize: 11,
+    fontWeight: "500",
+    letterSpacing: 0.35,
+  },
+  input: {
+    minHeight: 38,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderWidth: 1,
+    borderColor: "#c3c6d4",
+    borderRadius: 4,
+    backgroundColor: "#ffffff",
+    color: "#173f5f",
     fontSize: 14,
-    fontWeight: "900",
+  },
+  passwordWrap: {
+    minHeight: 38,
+    flexDirection: "row",
+    alignItems: "center",
+    borderWidth: 1,
+    borderColor: "#c3c6d4",
+    borderRadius: 4,
+    backgroundColor: "#ffffff",
+  },
+  passwordInput: {
+    flex: 1,
+    minHeight: 36,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    color: "#173f5f",
+    fontSize: 14,
+  },
+  eyeButton: {
+    width: 34,
+    height: 32,
+    alignItems: "center",
+    justifyContent: "center",
+    marginRight: 2,
+    borderRadius: 4,
+    backgroundColor: "#eef3f7",
+  },
+  accountTypeRow: {
+    flexDirection: "row",
+    gap: 6,
+  },
+  accountTypeButton: {
+    flex: 1,
+    minHeight: 34,
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 1,
+    borderColor: "#d0d4e4",
+    borderRadius: 4,
+  },
+  accountTypeButtonActive: {
+    borderColor: "#1a8f5a",
+    backgroundColor: "#edf6f1",
+  },
+  accountTypeText: {
+    color: "#526b82",
+    fontSize: 12,
+    fontWeight: "500",
+  },
+  accountTypeTextActive: {
+    color: "#0f6e44",
+    fontWeight: "600",
+  },
+  supportRow: {
+    gap: 2,
+    marginTop: -1,
+  },
+  supportLink: {
+    color: "#0f6e44",
+    fontSize: 12,
+    fontWeight: "600",
+  },
+  supportHint: {
+    color: "#7b95aa",
+    fontSize: 10,
+  },
+  resetPanel: {
+    gap: 7,
+    marginTop: 4,
+    padding: 10,
+    borderWidth: 1,
+    borderColor: "#e6e9ef",
+    borderRadius: 4,
+    backgroundColor: "#f8fafc",
+  },
+  resetButton: {
+    minHeight: 34,
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 1,
+    borderColor: "#1a8f5a",
+    borderRadius: 4,
+    backgroundColor: "#edf6f1",
+  },
+  resetButtonText: {
+    color: "#0f6e44",
+    fontSize: 11,
+    fontWeight: "700",
+    letterSpacing: 0.25,
+  },
+  resetMessage: {
+    color: "#1a6e37",
+    fontSize: 11,
+    lineHeight: 16,
+  },
+  error: {
+    padding: 9,
+    borderLeftWidth: 3,
+    borderLeftColor: "#b3261e",
+    borderRadius: 4,
+    backgroundColor: "#fbeaea",
+    color: "#8d211c",
+    fontSize: 12,
+    lineHeight: 17,
+  },
+  submit: {
+    minHeight: 38,
+    alignItems: "center",
+    justifyContent: "center",
+    marginTop: 2,
+    borderWidth: 1,
+    borderColor: "#1a8f5a",
+    borderRadius: 4,
+    backgroundColor: "#1a8f5a",
+  },
+  submitPressed: {
+    opacity: 0.72,
+  },
+  submitText: {
+    color: "#ffffff",
+    fontSize: 13,
+    fontWeight: "700",
+    letterSpacing: 0.25,
+  },
+  signupLinkWrap: {
+    alignItems: "center",
+    paddingTop: 2,
+  },
+  signupText: {
+    color: "#526b82",
+    fontSize: 11,
+  },
+  signupHighlight: {
+    color: "#0f6e44",
+    fontWeight: "600",
+  },
+  privacyText: {
+    marginTop: 3,
+    color: "#7b95aa",
+    fontSize: 10,
+    lineHeight: 14,
+    textAlign: "center",
+  },
+  privacyLink: {
+    color: "#0f6e44",
+    fontWeight: "600",
+  },
+  pressed: {
+    opacity: 0.82,
   },
 });

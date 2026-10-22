@@ -393,7 +393,7 @@ export const AppNavigator = () => {
             <RootStack.Screen
               name="Login"
               component={LoginScreen}
-              initialParams={{ authRoute: "sponsor" }}
+              initialParams={{ authRoute: "field" }}
             />
             <RootStack.Screen name="SponsorClaimAccount" component={SponsorClaimAccountScreen} />
           </>
