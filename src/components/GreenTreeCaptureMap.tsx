@@ -409,6 +409,14 @@ export const GreenTreeCaptureMap = ({
       <MapboxNative.MapView
         style={[styles.map, { height: mapHeight }]}
         styleURL={MapboxNative.StyleURL.SatelliteStreet}
+        // Android only: the default GLSurfaceView renders in its own separate native window,
+        // outside the normal View hierarchy's compositing - it doesn't respect a parent's
+        // `overflow: "hidden"` + `borderRadius` clip (styles.wrap, right below), which is the
+        // well-documented cause of a Mapbox MapView going solid black on Android specifically
+        // (iOS is unaffected - its MapView always composites normally). TextureView is a regular
+        // View that clips and composites like everything else, so switching to it here fixes the
+        // satellite map rendering black without giving up the rounded-card look.
+        surfaceView={false}
         logoEnabled
         attributionEnabled
         scaleBarEnabled={false}
