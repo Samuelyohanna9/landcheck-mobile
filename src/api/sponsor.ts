@@ -1,6 +1,7 @@
 import { api } from "./client";
 import { API_URL } from "../config/env";
 import { resolveGreenAssetUrl } from "../utils/assets";
+import * as FileSystem from "expo-file-system/legacy";
 import type {
   MobileSession,
   SponsorOrderPaymentInitResult,
@@ -229,8 +230,30 @@ export const fetchSponsorTreeDetail = async (session: MobileSession, unitId: num
   };
 };
 
-export const buildSponsorCertificateUrl = (session: MobileSession, unitId: number) =>
-  `${API_URL}/green/sponsor/trees/${unitId}/certificate/pdf?sponsor_id=${session.user.id}&access_token=${encodeURIComponent(session.access_token)}`;
+/**
+ * Download a private certificate with the bearer token in an Authorization
+ * header. Do not turn this into a URL containing access_token: URLs can be
+ * retained by platform logs, history, analytics and referrers.
+ */
+export const downloadSponsorCertificate = async (session: MobileSession, unitId: number) => {
+  const baseDirectory = FileSystem.cacheDirectory || FileSystem.documentDirectory;
+  if (!baseDirectory) throw new Error("Certificate storage is unavailable on this device.");
+
+  const safeUnitId = encodeURIComponent(String(unitId));
+  const safeSponsorId = encodeURIComponent(String(session.user.id));
+  const targetUri = `${baseDirectory}landcheck-certificate-${safeUnitId}-${Date.now()}.pdf`;
+  const result = await FileSystem.downloadAsync(
+    `${API_URL}/green/sponsor/trees/${safeUnitId}/certificate/pdf?sponsor_id=${safeSponsorId}`,
+    targetUri,
+    { headers: { Authorization: `Bearer ${session.access_token}` } },
+  );
+
+  if (result.status < 200 || result.status >= 300) {
+    await FileSystem.deleteAsync(result.uri, { idempotent: true }).catch(() => undefined);
+    throw new Error("The certificate could not be downloaded.");
+  }
+  return result.uri;
+};
 
 export const buildSponsorPublicTreeStoryUrl = (unitUid?: string | null) => {
   const normalized = encodeURIComponent(String(unitUid || "").trim());

@@ -3,7 +3,7 @@ import { Image as ExpoImage } from "expo-image";
 import { LinearGradient } from "expo-linear-gradient";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useFocusEffect } from "@react-navigation/native";
-import { Linking, Share, StyleSheet, Text, View } from "react-native";
+import { Alert, Linking, Share, StyleSheet, Text, View } from "react-native";
 import { BrandMark } from "../../components/BrandMark";
 import { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { GreenTreeCaptureMap } from "../../components/GreenTreeCaptureMap";
@@ -15,9 +15,9 @@ import { SectionCard } from "../../components/SectionCard";
 import { StatusChip } from "../../components/StatusChip";
 import { SponsorIdentityAvatar } from "../../components/SponsorIdentityAvatar";
 import {
-  buildSponsorCertificateUrl,
   buildSponsorPublicCertificateUrl,
   buildSponsorPublicTreeStoryUrl,
+  downloadSponsorCertificate,
   fetchSponsorTreeDetail,
 } from "../../api/sponsor";
 import { getErrorMessage } from "../../api/client";
@@ -158,10 +158,7 @@ export const SponsorTreeDetailScreen = ({ route }: Props) => {
 
   const publicStoryUrl = useMemo(() => buildSponsorPublicTreeStoryUrl(item?.unit_uid), [item?.unit_uid]);
   const greetingIcon = useMemo(() => getSponsorGreetingIcon(), []);
-  const certificateUrl = useMemo(
-    () => (session ? buildSponsorCertificateUrl(session, route.params.unitId) : ""),
-    [route.params.unitId, session],
-  );
+  const [certificateLoading, setCertificateLoading] = useState(false);
   const mapsUrl = useMemo(() => {
     if (!item?.lat || !item?.lng) return "";
     return `https://www.google.com/maps/dir/?api=1&destination=${item.lat},${item.lng}`;
@@ -194,25 +191,38 @@ export const SponsorTreeDetailScreen = ({ route }: Props) => {
     if (!item) return "";
     const species = item.species || "tree";
     const projectName = item.project_name || "LandCheck Green project";
-    const link = publicStoryUrl || certificateUrl;
+    const link = publicStoryUrl;
     const dedicationBits = [item.dedication_type ? toTitle(item.dedication_type) : "", item.dedication_name || ""].filter(Boolean);
     const dedicationText = dedicationBits.length ? ` This sponsorship is dedicated to ${dedicationBits.join(" - ")}.` : "";
     return [
       `I'm supporting verified tree restoration through LandCheck Green.`,
       `My sponsored ${species.toLowerCase()} tree in ${projectName} is mapped, photo-verified, and cared for by field teams.${dedicationText}`,
-      `Follow its live story here: ${link}`,
+      ...(link ? [`Follow its live story here: ${link}`] : []),
       `#LandCheckGreen #ClimateAction #TreeSponsorship`,
     ].join(" ");
-  }, [certificateUrl, item, publicStoryUrl]);
+  }, [item, publicStoryUrl]);
+
+  const handleOpenCertificate = useCallback(async () => {
+    if (!session || certificateLoading) return;
+    setCertificateLoading(true);
+    try {
+      const localUri = await downloadSponsorCertificate(session, route.params.unitId);
+      await Linking.openURL(localUri);
+    } catch (error) {
+      Alert.alert("Certificate unavailable", getErrorMessage(error, "The certificate could not be opened right now."));
+    } finally {
+      setCertificateLoading(false);
+    }
+  }, [certificateLoading, route.params.unitId, session]);
 
   const handleShareImpact = useCallback(async () => {
     if (!shareMessage) return;
     await Share.share({
       title: "My LandCheck Green tree",
       message: shareMessage,
-      url: publicStoryUrl || certificateUrl || undefined,
+      url: publicStoryUrl || undefined,
     });
-  }, [certificateUrl, publicStoryUrl, shareMessage]);
+  }, [publicStoryUrl, shareMessage]);
 
   if (!session) return null;
 
@@ -329,7 +339,7 @@ export const SponsorTreeDetailScreen = ({ route }: Props) => {
             </View>
           </View>
           <View style={styles.certificateActionGrid}>
-            <PrimaryButton label="Open Certificate" onPress={() => void Linking.openURL(certificateUrl + (certificateUrl.includes("?") ? "&" : "?") + "_cb=" + Date.now())} disabled={!certificateUrl} />
+            <PrimaryButton label={certificateLoading ? "Preparing certificate..." : "Open Certificate"} onPress={() => void handleOpenCertificate()} disabled={certificateLoading || !session} />
             <PrimaryButton label="Find My Tree" onPress={() => void Linking.openURL(mapsUrl)} variant="ghost" disabled={!mapsUrl} />
           </View>
           <View style={styles.shareCard}>
