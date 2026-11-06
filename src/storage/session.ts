@@ -18,6 +18,9 @@ const isSessionExpired = (session: Partial<MobileSession> | null | undefined) =>
   return false;
 };
 
+export const isSessionUsable = (session: Partial<MobileSession> | null | undefined) =>
+  Boolean(session?.authed && session?.user && String(session?.access_token || "").trim() && !isSessionExpired(session));
+
 export const saveSession = async (session: MobileSession) => {
   await SecureStore.setItemAsync(SESSION_KEY, JSON.stringify(session));
 };
@@ -27,7 +30,7 @@ export const loadSession = async (): Promise<MobileSession | null> => {
   if (!raw) return null;
   try {
     const parsed = JSON.parse(raw) as MobileSession;
-    if (parsed?.authed && parsed?.user && String(parsed?.access_token || "").trim() && !isSessionExpired(parsed)) {
+    if (isSessionUsable(parsed)) {
       return {
         ...parsed,
         access_token: String(parsed.access_token || "").trim(),

@@ -1,14 +1,30 @@
 import axios, { AxiosHeaders, type InternalAxiosRequestConfig } from "axios";
 import { API_URL } from "../config/env";
-import { loadSession } from "../storage/session";
+import { isSessionUsable, loadSession } from "../storage/session";
+import type { MobileSession } from "../types/domain";
 
 export const api = axios.create({
   baseURL: API_URL,
   timeout: 20000,
 });
 
+// AuthContext is the source of truth while the app is running. SecureStore remains
+// the persistence layer for app restarts, but reading it on every request can race
+// with login/restore and leave a signed-in UI making unauthenticated API calls.
+let activeSession: MobileSession | null = null;
+
+export const setMobileApiSession = (session: MobileSession | null) => {
+  activeSession = session;
+};
+
+const getRequestSession = async () => {
+  if (activeSession && isSessionUsable(activeSession)) return activeSession;
+  if (activeSession) activeSession = null;
+  return loadSession().catch(() => null);
+};
+
 const attachMobileLandCheckHeaders = async (config: InternalAxiosRequestConfig) => {
-  const session = await loadSession().catch(() => null);
+  const session = await getRequestSession();
   const sponsorSession = session?.auth_mode === "sponsor_user" || session?.appMode === "green_sponsor";
   const headers = config.headers instanceof AxiosHeaders ? config.headers : new AxiosHeaders(config.headers);
   config.headers = headers;

@@ -1,6 +1,6 @@
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import { AppState, type AppStateStatus } from "react-native";
-import { api } from "../api/client";
+import { api, setMobileApiSession } from "../api/client";
 import { bootstrapLocalDatabase } from "../storage/database";
 import { clearSession, loadSession, saveSession } from "../storage/session";
 import { hasStoredConsent, hasSeenIntro, markIntroSeen, saveStoredConsent } from "../storage/privacy";
@@ -79,6 +79,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         ...patch,
       },
     };
+    setMobileApiSession(next);
     setSession(next);
     await saveSession(next);
   };
@@ -92,9 +93,11 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       if (restored) {
         if (isOrgSuspended(restored)) {
           await clearSession();
+          setMobileApiSession(null);
           if (active) setBooting(false);
           return;
         }
+        setMobileApiSession(restored);
         setSession(restored);
         const introSeen = await hasSeenIntro();
         if (!introSeen && active) setNeedsIntro(true);
@@ -160,6 +163,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         if (isOrgSuspended(signedIn)) {
           throw new Error("Your organization account is suspended. Contact your administrator.");
         }
+        setMobileApiSession(signedIn);
         setSession(signedIn);
         await saveSession(signedIn);
         const introSeen = await hasSeenIntro();
@@ -179,6 +183,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       },
       signInSponsor: async (email, password) => {
         const signedIn = await loginSponsorMobile(email, password);
+        setMobileApiSession(signedIn);
         setSession(signedIn);
         await saveSession(signedIn);
         setPendingConsent(null);
@@ -187,6 +192,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       },
       signUpSponsor: async (input) => {
         const signedIn = await signUpSponsorMobile(input);
+        setMobileApiSession(signedIn);
         setSession(signedIn);
         await saveSession(signedIn);
         setPendingConsent(null);
@@ -218,6 +224,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
           await clearSponsorEngagementNotifications();
         }
         setPendingConsent(null);
+        setMobileApiSession(null);
         setSession(null);
         await clearSession();
       },
@@ -231,6 +238,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         await clearGreenPushRegistration(session);
         await unregisterGreenBackgroundTasks();
         setPendingConsent(null);
+        setMobileApiSession(null);
         setSession(null);
         await clearSession();
       },
